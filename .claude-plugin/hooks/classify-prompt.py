@@ -79,7 +79,7 @@ SESSION_STATE_FILE = Path.home() / ".claude" / "router-session.json"
 DEPRECATION_WARNING_FILE = Path.home() / ".claude" / "router-deprecation-warned.json"
 
 # Marketplace deprecation settings
-MARKETPLACE_DEPRECATED = True
+MARKETPLACE_DEPRECATED = False  # Disabled - we installed directly, not from marketplace
 MARKETPLACE_DEPRECATION_MESSAGE = """
 [Claude Router] MARKETPLACE MIGRATION NOTICE
 
