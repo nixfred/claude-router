@@ -26,3 +26,6 @@ Thumbs.db
 
 # Internal drafts
 .knowledge-architecture-draft.md
+
+# Claude Code Forever - conversations tracked by default
+# Uncomment to exclude: conversations/claude-sessions/*.jsonl
