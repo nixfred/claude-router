@@ -2,6 +2,63 @@
 
 All notable changes to Claude Router will be documented in this file.
 
+## [2.0.6] - 2026-01-12
+
+### Changed
+- **Hook-level model enforcement**: `/route opus|sonnet|haiku` and `/retry deep|standard` now enforced at hook level
+- Model cannot be overridden by Claude - explicit user choice is authoritative
+- Strengthened skill/command instructions to emphasize honoring user choices
+- **Removed old marketplace**: `claude-router-marketplace` no longer supported
+- Only `0xrdan/claude-plugins` marketplace is active
+
+### Fixed
+- `/route opus <query>` now guaranteed to use Opus (was sometimes reclassified)
+- `/retry deep` now guaranteed to use Opus (was sometimes auto-escalated differently)
+
+---
+
+## [2.0.5] - 2026-01-12
+
+### Changed
+- **HARD DEPRECATION**: Routing blocked for users on old `claude-router-marketplace`
+- Users must run `/migrate-marketplace` to continue using Claude Router
+
+---
+
+## [2.0.4] - 2026-01-12
+
+### Fixed
+- Fixed deprecation warning hook (was missing from root hooks directory)
+
+---
+
+## [2.0.3] - 2026-01-12
+
+### Fixed
+- Fixed migrate-marketplace command/skill paths (was missing from root directories)
+- Fixed marketplace version to enable updates
+
+---
+
+## [2.0.2] - 2026-01-12
+
+### Changed
+- **Marketplace migration**: Moved from `claude-router-marketplace` to centralized `0xrdan/claude-plugins`
+- Added `/migrate-marketplace` command (temporary) to help users migrate
+- Added daily deprecation warning for users on old marketplace
+- Old marketplace will be removed in a future update
+
+**Note:** This is a distribution change only. The plugin repo (`0xrdan/claude-router`) remains the same. Your settings and stats are preserved.
+
+---
+
+## [2.0.1] - 2026-01-12
+
+### Fixed
+- Renamed `ralph-wiggum` to `ralph-loop` across all references to match the official plugin name in the marketplace
+
+---
+
 ## [2.0.0] - 2026-01-11
 
 ### Major Release - Performance, Context Forking, Multi-Turn Awareness
@@ -59,7 +116,7 @@ Optional integrations with official Claude Code plugins:
 | Plugin | Integration |
 |--------|-------------|
 | hookify | Pattern-based behavior rules |
-| ralph-wiggum | Iterative development loops |
+| ralph-loop | Iterative development loops |
 | code-review | Multi-agent PR review |
 | feature-dev | 7-phase feature development |
 
