@@ -24,8 +24,8 @@ Thumbs.db
 .env
 .env.local
 
-# Internal drafts
-.knowledge-architecture-draft.md
-
-# Claude Code Forever - conversations tracked by default
-# Uncomment to exclude: conversations/claude-sessions/*.jsonl
+# User-generated content (Claude Router creates these locally)
+# These may contain project-specific or sensitive information
+# To share knowledge with your team, see knowledge/.gitignore
+knowledge/
+router-analytics.html
