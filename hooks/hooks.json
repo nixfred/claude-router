@@ -10,6 +10,17 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/cr-doctor.py",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

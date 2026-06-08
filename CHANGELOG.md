@@ -2,6 +2,28 @@
 
 All notable changes to Claude Router will be documented in this file.
 
+## [3.0.0] - 2026-06-07
+
+The "keep working, not save money" release. Rebuilt around surviving Max/Pro 5-hour rate limits instead of chasing fictional dollar savings.
+
+### Changed
+- **Removed all dollar/cost estimation.** On a subscription, per-query dollar savings are fiction (flat fee regardless). The router now counts only real "kept off Opus" routing events. Stats are a new v3.0 schema; pre-3.0 stats are archived automatically on first run.
+- **Conservative Opus routing.** Uncertain prompts now default to **Sonnet** (was Haiku), fixing the old default-to-fast bias that dumped ~96% of traffic onto Haiku. Mechanical multi-file and exploration work routes to Sonnet rather than being escalated to Opus.
+- **Softer routing directive.** Replaced the aggressive "CRITICAL: YOU MUST" injection with a clear, reasoned instruction that modern Opus follows more reliably.
+- **Bare subagent names.** Dropped the `claude-router:` plugin namespace from delegation targets (the marketplace is deprecated upstream; agents register as plain user agents).
+- **No-op on trivial and deep prompts.** Trivial one-liners are answered inline and genuine Opus-tier reasoning stays on the main loop, both avoiding a pointless subagent hand-off tax (and neither is counted as a saving).
+
+### Added
+- **Self-heal (`cr-doctor`).** A SessionStart hook that verifies and reinstalls CR's wiring on every boot, so it can never silently die again. Also serves as the one-shot installer.
+- **Status-line tally + alarm.** A `⇩ today·week` kept-off-Opus counter, and a `CR⚠` indicator the moment the hook is not wired.
+- **`/cr-doctor` skill** for on-demand health check and repair, plus an optional daily cron backstop.
+- **`install.sh`** for the supported manual install.
+
+### Notes
+- Forked from [0xrdan/claude-router](https://github.com/0xrdan/claude-router) v2.0.7 by Dan Monteiro. The classifier and subagent design are his foundation; v3 changes the purpose and the honesty model.
+
+---
+
 ## [2.0.7] - 2026-01-13
 
 ### Changed

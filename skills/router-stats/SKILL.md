@@ -1,98 +1,63 @@
 ---
 name: router-stats
-description: Display Claude Router usage statistics and cost savings
+description: Use when user says "router stats", "/router-stats", "how much did we keep off opus", "show routing", "cr stats", or wants Claude Router's kept-off-Opus tally and route distribution.
 user_invokable: true
 ---
 
 # Router Stats
 
-Display usage statistics and estimated cost savings from Claude Router.
+Show how much work Claude Router kept off Opus. **No dollar figures**: on a Max/Pro subscription dollar savings are fictional (flat fee regardless). The number that matters is how many prompts went to Sonnet/Haiku instead of Opus, which is what preserves the 5-hour budget.
 
 ## Instructions
 
-Read the stats file at `~/.claude/router-stats.json` and present the data in a clear, formatted way.
+Read `~/.claude/router-stats.json` (v3.0 schema) and present it clearly.
 
-## Data Format
-
-The stats file contains (v1.2 schema):
+## Data Format (v3.0)
 ```json
 {
-  "version": "1.2",
-  "total_queries": 100,
-  "routes": {"fast": 30, "standard": 50, "deep": 10, "orchestrated": 10},
-  "exceptions": {"router_meta": 15, "slash_commands": 0},
-  "tool_intensive_queries": 25,
-  "orchestrated_queries": 10,
-  "estimated_savings": 12.50,
-  "delegation_savings": 2.50,
+  "version": "3.0",
+  "total_queries": 120,
+  "routes": {"fast": 14, "standard": 78, "deep": 28, "orchestrated": 0},
+  "kept_off_opus_all_time": 92,
+  "recent_events": [{"ts": 0.0, "route": "standard", "kept": true}],
   "sessions": [
-    {
-      "date": "2026-01-03",
-      "queries": 25,
-      "routes": {"fast": 8, "standard": 12, "deep": 2, "orchestrated": 3},
-      "savings": 3.20
-    }
+    {"date": "2026-06-07", "queries": 40, "kept_off_opus": 31,
+     "routes": {"fast": 5, "standard": 26, "deep": 9, "orchestrated": 0}}
   ],
-  "last_updated": "2026-01-03T15:30:00"
+  "last_updated": "2026-06-07T20:40:00"
 }
 ```
 
+`kept_off_opus` = prompts routed to Sonnet or Haiku instead of Opus. Trivial prompts answered inline and genuine Opus-tier reasoning are deliberately not counted (no real saving to claim).
+
 ## Output Format
-
-Present the stats like this:
-
 ```
 ╔═══════════════════════════════════════════════════╗
-║           Claude Router Statistics                 ║
+║              Claude Router · kept off Opus         ║
 ╚═══════════════════════════════════════════════════╝
 
-📊 All Time
+⇩ Kept off Opus
 ───────────────────────────────────────────────────
-Total Queries Routed: 100
+  This 5-hour window:  <N>
+  Today:               31
+  This week:           <sum of last 7 days>
+  All time:            92
 
-Route Distribution:
-  Fast (Haiku):       30 (30%)  ████████░░░░░░░░░░░░
-  Standard (Sonnet):  50 (50%)  ██████████████░░░░░░
-  Deep (Opus):        10 (10%)  ████░░░░░░░░░░░░░░░░
-  Orchestrated:       10 (10%)  ████░░░░░░░░░░░░░░░░
-
-🔧 Tool-Aware Routing
+📊 Route distribution (all time)
 ───────────────────────────────────────────────────
-Tool-Intensive Queries: 25 (25%)
-Orchestrated Queries:   10 (10%)
+  Haiku  (fast):     14  ███░░░░░░░░░░░░░░
+  Sonnet (standard): 78  ████████████████
+  Opus   (deep):     28  ██████░░░░░░░░░░
 
-⚡ Exceptions (handled by Opus despite classification)
+📅 Today (2026-06-07)
 ───────────────────────────────────────────────────
-Router Meta-Queries:  15  (queries about the router itself)
-Total Exceptions:     15
-
-💰 Cost Savings
-───────────────────────────────────────────────────
-Estimated Savings:   $12.50  (compared to always using Opus)
-Delegation Savings:  $2.50   (from hybrid delegation)
-Total Savings:       $15.00
-
-📅 Today (2026-01-03)
-───────────────────────────────────────────────────
-Queries: 25
-Savings: $3.20
-
-Route Distribution:
-  Fast: 8 | Standard: 12 | Deep: 2 | Orchestrated: 3
+  40 prompts | 31 kept off Opus
+  Haiku 5 · Sonnet 26 · Opus 9
 ```
 
 ## Steps
-
-1. Use the Read tool to read `~/.claude/router-stats.json`
-2. If the file doesn't exist, inform the user that no stats are available yet
-3. Calculate percentages for route distribution
-4. Display exception counts if present (router_meta queries are handled by Opus despite classification)
-5. Format and display the statistics
-6. Include the savings comparison explanation
-
-## Notes
-
-- Savings are calculated assuming Opus would have been used for all queries
-- Cost estimates use: Haiku 4.5 $1/$5, Sonnet 4.5 $3/$15, Opus 4.5 $5/$25 per 1M tokens
-- Average query estimated at 1K input + 2K output tokens
-- **Exceptions**: Queries about the router itself are classified but handled by Opus (per CLAUDE.md rules). This is intentional - users discussing the router get the most capable model while still seeing what the classifier decided.
+1. Read `~/.claude/router-stats.json`. If it is missing, say there are no stats yet (fresh install, or no routed prompts since the last reset).
+2. 5-hour window: count `recent_events` entries with `kept == true` whose `ts` is within the last 5 hours.
+3. This week: sum `kept_off_opus` across `sessions` dated within the last 7 days.
+4. Show today's session, all-time `kept_off_opus`, and route distribution with simple bars.
+5. **Never show dollar amounts.** If asked about money, explain: on a subscription the value is 5-hour budget preserved (fewer rate-limit walls), not dollars saved. Suggest lining the kept-off-Opus count up against how fast their usage meter moves.

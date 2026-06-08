@@ -1,92 +1,32 @@
 # Routing Rules
 
-Claude Router automatically classifies queries and routes them to the optimal model.
+Claude Router classifies every prompt with instant, free regex rules (an optional ~$0.001 Haiku check handles only genuinely ambiguous prompts), then routes the ones that do not need Opus to a cheaper model. It is deliberately conservative about Opus to protect your 5-hour budget.
 
-## Fast Route (Haiku) - Simple queries
+## Fast route (Haiku): clearly simple, substantive
+- Factual lookups, formatting and linting, git status/log/diff, JSON/YAML, regex, syntax questions.
+- Trivial one-liners (very short, no tool intent) are answered inline on the main loop instead of being delegated. The Opus hand-off would cost more than it saves, so they are not delegated and not counted.
 
-- Factual questions ("What is X?")
-- Code formatting, linting
-- Git status, log, diff
-- JSON/YAML manipulation
-- Regex generation
-- Syntax questions
+## Standard route (Sonnet): the workhorse, and the default when uncertain
+- Bug fixes, feature work, code review, refactoring, test writing.
+- Tool-intensive work: codebase search, "where is X used", multi-file mechanical edits, running tests.
+- Anything the rules are unsure about. Sonnet is capable enough to avoid a wrong cheap answer that would force an Opus retry.
 
-## Standard Route (Sonnet) - Typical coding + Tool-intensive tasks
+## Deep route (Opus): reserved for genuine reasoning
+- Architecture and system design, security audits, deep trade-off analysis, hard performance work.
+- Escalation requires a strong signal. A single incidental keyword next to tool or exploration signals is treated as exploration and routed to Sonnet, not escalated to Opus. Genuine Opus-tier prompts stay on the main loop (already Opus) rather than being handed to an Opus subagent.
 
-- Bug fixes and feature implementation
-- Code review and refactoring
-- Test writing
-- **Tool-intensive tasks** (v1.2): Codebase searches, running tests, multi-file edits
-- **Orchestration tasks** (v1.2): Multi-step workflows
+## What counts as "kept off Opus"
+Every prompt routed to Sonnet or Haiku. Trivial inline answers and Opus-tier prompts are not counted. See `/router-stats`.
 
-## Deep Route (Opus) - Complex tasks
-
-- Architecture decisions
-- Security audits
-- Trade-off analysis
-- Performance optimization
-- System design
-
-## Opus Orchestrator (v1.2) - Complex + Tool-intensive
-
-When a query is both architecturally complex AND tool-intensive:
-- Opus handles strategy and synthesis
-- Delegates file reads/searches to Haiku
-- Delegates implementations to Sonnet
-- ~40% cost savings on complex workflows
-
----
-
-## Example Output
-
-**Simple query → Haiku:**
+## Example directive (Sonnet)
+When CR routes a prompt down it injects a short, reasoned instruction (not an aggressive command, which modern Opus tends to distrust):
 ```
-[Claude Router] MANDATORY ROUTING DIRECTIVE
-Route: fast | Model: Haiku | Confidence: 90% | Method: rules
-Signals: what is, json
+[Claude Router] Keep this off Opus to preserve the 5-hour budget. Route it to Sonnet.
+Classified: standard (85%, rules) | tool-intensive | signals: find all, across the codebase
+
+Spawn the standard-executor subagent with the Task tool and answer from its result; do not handle it directly on Opus.
 ```
 
-**Tool-intensive query → Sonnet (v1.2):**
-```
-[Claude Router] MANDATORY ROUTING DIRECTIVE
-Route: standard | Model: Sonnet | Confidence: 85% | Method: rules | Tool-intensive: Yes
-Signals: find all, across the codebase
-```
-
-**Complex + Tool-intensive → Opus Orchestrator (v1.2):**
-```
-[Claude Router] MANDATORY ROUTING DIRECTIVE
-Route: deep | Model: Opus (Orchestrator) | Confidence: 95% | Method: rules | Tool-intensive: Yes | Orchestration: Yes
-Signals: architecture, refactor across the entire codebase
-```
-
-**Follow-up query with context awareness (v2.0):**
-```
-[Claude Router] MANDATORY ROUTING DIRECTIVE
-Route: deep | Model: Opus | Confidence: 92% | Method: rules | Follow-up: Yes | Context boost: +0.1
-Signals: follow-up to previous complex query
-```
-
----
-
-## How Classification Works
-
-### Rule-Based Classification (Default)
-
-Claude Router uses pattern matching to classify queries instantly:
-- **Zero latency**: No API call needed
-- **Zero cost**: All processing happens locally
-- **High accuracy**: Patterns tuned for coding workflows
-
-### Hybrid Classification (Optional)
-
-For edge cases with low confidence, Claude Router can use Haiku LLM as a fallback:
-- Only triggered when rule confidence < 70%
-- Adds ~100ms latency
-- Costs ~$0.001 per classification
-- Significantly improves accuracy on ambiguous queries
-
-To enable, set your API key:
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-```
+## Classification
+- **Rules (default):** zero latency, no API call, tuned for coding workflows.
+- **Hybrid (optional):** when rule confidence is below 70%, a Haiku check (~100ms, ~$0.001) improves accuracy on ambiguous prompts. Enable with `export ANTHROPIC_API_KEY=sk-ant-...`. Off by default; it also spends a few tokens against your 5-hour budget.

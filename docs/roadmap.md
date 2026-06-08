@@ -2,6 +2,14 @@
 
 ## Completed
 
+### v3.0.0: Rate-limit survival, honesty, self-heal
+- Repurposed around surviving Max/Pro 5-hour limits instead of chasing dollar savings
+- Removed all dollar estimation; counts real "kept off Opus" events (v3.0 stats schema)
+- Conservative Opus routing; Sonnet is the default when uncertain (fixes the old default-to-Haiku bias)
+- Status-line tally (⇩ today·week) plus a CR⚠ liveness alarm
+- `cr-doctor` self-heal at every session boot, a daily cron backstop, and a `/cr-doctor` skill
+- Softer routing directive and bare subagent names
+
 ### Phase 1: Rule-based Classification
 - Zero-latency pattern matching (~0ms)
 - Zero cost (no API calls)
@@ -26,7 +34,7 @@
 - Opus Orchestrator mode for complex multi-step tasks
 - Smart delegation: Opus handles strategy, spawns Haiku/Sonnet for subtasks
 - Escalation paths: Sonnet can recommend Opus for architectural decisions
-- Enhanced cost tracking with delegation metrics (~40% additional savings)
+- Enhanced delegation metrics for orchestrated tasks
 
 ### Phase 6: Knowledge System (v1.4.0)
 - Persistent knowledge base that survives session boundaries and context compaction
@@ -62,7 +70,7 @@ Dynamic routing rule creation via hookify:
 
 1. **Validates their model lineup** - Proves Haiku/Sonnet/Opus tiering works in practice
 2. **Real usage data** - What % of coding queries actually need Opus?
-3. **Adoption driver** - Lower effective cost → more Claude Code usage
+3. **Adoption driver** - longer working sessions before hitting rate limits
 4. **Reference implementation** - Could inform native routing features
 5. **Community showcase** - Open source tool built *for* their ecosystem
 
@@ -71,7 +79,7 @@ Dynamic routing rule creation via hookify:
 ## What Makes People Use It
 
 1. **Zero-config start** - Works immediately with sensible defaults
-2. **Visible savings** - Use `/router-stats` to see your cost savings
+2. **Visible impact** - Use `/router-stats` to see prompts kept off Opus
 3. **Trust through transparency** - Every routing decision is explained
 4. **Easy override** - `/route <model>` to force any model when needed
 5. **Learns from feedback** - Future: adjust routing based on user overrides

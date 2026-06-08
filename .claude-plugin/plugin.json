@@ -1,14 +1,15 @@
 {
   "name": "claude-router",
-  "version": "2.0.7",
-  "description": "Intelligent model routing for Claude Code - routes queries to optimal Claude model (Haiku/Sonnet/Opus) based on complexity, with persistent knowledge system, context forking, and multi-turn awareness",
+  "version": "3.0.0",
+  "description": "Routing layer for Claude Code that keeps work off Opus to survive Max/Pro 5-hour rate limits. Honest kept-off-Opus counting (no dollar fiction), conservative Opus routing, a live status-line tally, and a self-heal layer so it never silently dies.",
   "author": {
-    "name": "Dan Monteiro"
+    "name": "Fred Nix",
+    "url": "https://github.com/nixfred"
   },
-  "homepage": "https://github.com/0xrdan/claude-router",
-  "repository": "https://github.com/0xrdan/claude-router",
+  "homepage": "https://github.com/nixfred/claude-router",
+  "repository": "https://github.com/nixfred/claude-router",
   "license": "MIT",
-  "keywords": ["routing", "model-selection", "cost-optimization", "haiku", "sonnet", "opus", "context-forking", "multi-turn"],
+  "keywords": ["routing", "rate-limit", "5-hour-limit", "model-selection", "haiku", "sonnet", "opus", "self-healing", "claude-code"],
   "agents": [
     "./agents/fast-executor.md",
     "./agents/standard-executor.md",
@@ -18,6 +19,7 @@
   "commands": [
     "./commands/route.md",
     "./commands/router-stats.md",
+    "./commands/cr-doctor.md",
     "./commands/learn.md",
     "./commands/learn-on.md",
     "./commands/learn-off.md",
@@ -31,6 +33,7 @@
   "skills": [
     "./skills/route/SKILL.md",
     "./skills/router-stats/SKILL.md",
+    "./skills/cr-doctor/SKILL.md",
     "./skills/learn/SKILL.md",
     "./skills/learn-on/SKILL.md",
     "./skills/learn-off/SKILL.md",

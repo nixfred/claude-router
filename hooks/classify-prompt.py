@@ -38,16 +38,9 @@ CONFIDENCE_THRESHOLD = 0.7
 # Stats file location
 STATS_FILE = Path.home() / ".claude" / "router-stats.json"
 
-# Cost estimates per 1M tokens (input/output)
-COST_PER_1M = {
-    "fast": {"input": 1.0, "output": 5.0},        # Haiku 4.5
-    "standard": {"input": 3.0, "output": 15.0},   # Sonnet 4.5
-    "deep": {"input": 5.0, "output": 25.0},       # Opus 4.5
-}
-
-# Average tokens per query (rough estimate)
-AVG_INPUT_TOKENS = 1000
-AVG_OUTPUT_TOKENS = 2000
+# (v3.0) Dollar math removed by design. On a Max/Pro subscription, per-query
+# dollar "savings" are fictional (flat fee regardless). CR now counts real,
+# honest "kept off Opus" routing events instead,see log_routing_decision().
 
 # Exception patterns - queries that will be handled by Opus despite classification
 # (router meta-questions, slash commands handled in main())
@@ -530,8 +523,9 @@ PATTERNS = {
         re.compile(r"\bscalable?\b"),
         # Security
         re.compile(r"\b(security|vulnerab|audit|penetration|exploit)\b"),
-        # Multi-file
-        re.compile(r"\b(across|multiple|all) (files?|components?|modules?)\b"),
+        # (v3.0) Removed the over-eager "(across|multiple|all) files" deep pattern.
+        # Mechanical multi-file scope is exploration, not deep reasoning,it is
+        # handled by tool_intensive -> Sonnet, keeping grunt work OFF Opus.
         re.compile(r"\brefactor.{0,20}(codebase|project|entire)\b"),
         # Trade-offs
         re.compile(r"\b(trade-?off|compare|pros? (and|&) cons?)\b"),
@@ -605,34 +599,35 @@ def get_api_key():
     return None
 
 
-def calculate_cost(route: str, input_tokens: int = AVG_INPUT_TOKENS, output_tokens: int = AVG_OUTPUT_TOKENS) -> float:
-    """Calculate estimated cost for a route."""
-    costs = COST_PER_1M[route]
-    input_cost = (input_tokens / 1_000_000) * costs["input"]
-    output_cost = (output_tokens / 1_000_000) * costs["output"]
-    return input_cost + output_cost
+# (v3.0) calculate_cost() removed,CR no longer estimates dollars.
+
+
+def _default_stats() -> dict:
+    """Fresh v3.0 stats document. No dollar math,counts 'kept off Opus' events."""
+    return {
+        "version": "3.0",
+        "total_queries": 0,
+        "routes": {"fast": 0, "standard": 0, "deep": 0, "orchestrated": 0},
+        "kept_off_opus_all_time": 0,
+        "recent_events": [],   # rolling [{ts, route, kept}] trimmed to last 5h
+        "sessions": [],        # per-day, last 30 days
+        "last_updated": None,
+    }
 
 
 def log_routing_decision(route: str, confidence: float, method: str, signals: list, metadata: dict = None):
-    """Log routing decision to stats file with optional metadata tracking."""
+    """Record a routing decision as a COUNT,no dollar math, no fiction.
+
+    A 'kept off Opus' event = routed to fast (Haiku) or standard (Sonnet) AND
+    actually delegated. Trivial prompts flagged no_delegate are NOT counted,
+    because the Opus hand-off tax cancels the gain (verified design choice).
+    The number is a count of routing decisions; the user validates it against
+    their own observed usage burn. Honest by construction.
+    """
     try:
-        # Ensure directory exists
         STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-        # Load existing stats or create new (v1.2 schema with exception tracking)
-        stats = {
-            "version": "1.2",
-            "total_queries": 0,
-            "routes": {"fast": 0, "standard": 0, "deep": 0, "orchestrated": 0},
-            "exceptions": {"router_meta": 0, "slash_commands": 0},
-            "tool_intensive_queries": 0,
-            "orchestrated_queries": 0,
-            "estimated_savings": 0.0,
-            "delegation_savings": 0.0,
-            "sessions": [],
-            "last_updated": None
-        }
-
+        stats = _default_stats()
         if STATS_FILE.exists():
             try:
                 with open(STATS_FILE, "r") as f:
@@ -642,80 +637,53 @@ def log_routing_decision(route: str, confidence: float, method: str, signals: li
             except (json.JSONDecodeError, IOError):
                 pass
 
-        # Ensure v1.2 schema fields exist (migration from v1.0/v1.1)
-        stats.setdefault("version", "1.2")
-        stats.setdefault("routes", {}).setdefault("orchestrated", 0)
-        stats.setdefault("exceptions", {"router_meta": 0, "slash_commands": 0})
-        stats.setdefault("tool_intensive_queries", 0)
-        stats.setdefault("orchestrated_queries", 0)
-        stats.setdefault("delegation_savings", 0.0)
+        # Migrate any pre-3.0 schema forward; legacy dollar fields are dropped.
+        if stats.get("version") != "3.0":
+            stats = _default_stats()
+        for k, v in _default_stats().items():
+            stats.setdefault(k, v)
+        stats["routes"].setdefault("orchestrated", 0)
 
-        # Update stats
-        stats["total_queries"] += 1
         metadata = metadata or {}
+        now = datetime.now()
+        ts = now.timestamp()
+        today = now.strftime("%Y-%m-%d")
 
-        # Track exceptions (queries that bypass routing due to CLAUDE.md rules)
-        exception_type = metadata.get("exception_type")
-        if exception_type:
-            stats["exceptions"][exception_type] = stats["exceptions"].get(exception_type, 0) + 1
+        # "kept off Opus": cheaper tier AND actually delegated
+        kept = route in ("fast", "standard") and not metadata.get("no_delegate")
 
-        # Track orchestrated vs regular routes
-        if metadata.get("orchestration") and route == "deep":
-            stats["routes"]["orchestrated"] += 1
-            stats["orchestrated_queries"] += 1
-        else:
-            stats["routes"][route] += 1
+        stats["total_queries"] += 1
+        stats["routes"][route] = stats["routes"].get(route, 0) + 1
+        if kept:
+            stats["kept_off_opus_all_time"] += 1
 
-        # Track tool-intensive queries
-        if metadata.get("tool_intensive"):
-            stats["tool_intensive_queries"] += 1
+        # Rolling 5-hour window (trim to last 5h, bound length)
+        events = stats.get("recent_events", [])
+        events.append({"ts": ts, "route": route, "kept": kept})
+        cutoff = ts - 5 * 3600
+        stats["recent_events"] = [e for e in events if e.get("ts", 0) >= cutoff][-1000:]
 
-        # Calculate savings (compared to always using Opus)
-        actual_cost = calculate_cost(route)
-        opus_cost = calculate_cost("deep")
-        savings = opus_cost - actual_cost
-        stats["estimated_savings"] += savings
-
-        # Calculate delegation savings for orchestrated queries
-        # Assumes 60% delegation (70% Haiku, 30% Sonnet) saves ~40% vs pure Opus
-        if metadata.get("orchestration"):
-            delegation_saving = opus_cost * 0.4  # ~40% savings through delegation
-            stats["delegation_savings"] += delegation_saving
-
-        # Get or create today's session
-        today = datetime.now().strftime("%Y-%m-%d")
-        session = None
-        for s in stats.get("sessions", []):
-            if s["date"] == today:
-                session = s
-                break
-
-        if not session:
-            session = {
-                "date": today,
-                "queries": 0,
-                "routes": {"fast": 0, "standard": 0, "deep": 0},
-                "savings": 0.0
-            }
-            stats.setdefault("sessions", []).append(session)
-
+        # Per-day session (last 30 days)
+        session = next((s for s in stats["sessions"] if s.get("date") == today), None)
+        if session is None:
+            session = {"date": today, "queries": 0, "kept_off_opus": 0,
+                       "routes": {"fast": 0, "standard": 0, "deep": 0, "orchestrated": 0}}
+            stats["sessions"].append(session)
         session["queries"] += 1
-        session["routes"][route] += 1
-        session["savings"] += savings
+        session["routes"][route] = session["routes"].get(route, 0) + 1
+        if kept:
+            session["kept_off_opus"] += 1
+        stats["sessions"] = sorted(stats["sessions"], key=lambda s: s.get("date", ""), reverse=True)[:30]
 
-        # Keep only last 30 days of sessions
-        stats["sessions"] = sorted(stats["sessions"], key=lambda x: x["date"], reverse=True)[:30]
+        stats["last_updated"] = now.isoformat()
 
-        stats["last_updated"] = datetime.now().isoformat()
-
-        # Write stats atomically
         with open(STATS_FILE, "w") as f:
             lock_file(f, exclusive=True)
             json.dump(stats, f, indent=2)
             unlock_file(f)
 
     except Exception:
-        # Don't fail the hook if stats logging fails
+        # Never break the hook over stats.
         pass
 
 
@@ -765,8 +733,11 @@ def classify_by_rules(prompt: str) -> dict:
             if deep_signals:
                 break
 
-    # Decision matrix: deep + tool_intensive + orchestration
-    if deep_signals and (tool_signals or orch_signals):
+    # Decision matrix (v3.0,conservative about Opus to protect the 5h budget):
+    # Only escalate to deep/Opus when there is STRONG reasoning signal (2+ deep
+    # hits). One incidental deep keyword next to tool/orchestration signals is
+    # almost always exploration or mechanical multi-file work -> route to Sonnet.
+    if len(deep_signals) >= 2 and (tool_signals or orch_signals):
         # Complex task needing orchestration - route to deep with orchestration flag
         combined = deep_signals + tool_signals + orch_signals
         return {
@@ -823,8 +794,11 @@ def classify_by_rules(prompt: str) -> dict:
     if fast_signals:  # One fast signal
         return {"route": "fast", "confidence": 0.7, "signals": fast_signals, "method": "rules"}
 
-    # Default to fast with low confidence - cheaper when uncertain
-    return {"route": "fast", "confidence": 0.5, "signals": ["no strong patterns"], "method": "rules"}
+    # Default to STANDARD (Sonnet) when uncertain. Sonnet is the capable
+    # workhorse that keeps work off Opus without risking a Haiku flub that
+    # forces an Opus retry (which would burn the 5-hour budget anyway).
+    # This fixes the old default-to-fast bias (96% of traffic fell to Haiku).
+    return {"route": "standard", "confidence": 0.5, "signals": ["no strong patterns"], "method": "rules"}
 
 
 def classify_by_llm(prompt: str, api_key: str) -> dict:
@@ -962,12 +936,12 @@ Route: {route} | Model: {model} | Source: User specified "{first_word}"
 
 USER EXPLICITLY REQUESTED {model.upper()}. This is NOT a suggestion - it is a COMMAND.
 
-CRITICAL: Spawn "claude-router:{subagent}" with the query below. DO NOT reclassify. DO NOT override.
+CRITICAL: Spawn "{subagent}" with the query below. DO NOT reclassify. DO NOT override.
 
 Query: {query}
 
 Example:
-Task(subagent_type="claude-router:{subagent}", prompt="{query}", description="Route to {model}")"""
+Task(subagent_type="{subagent}", prompt="{query}", description="Route to {model}")"""
 
                 output = {
                     "hookSpecificOutput": {
@@ -997,11 +971,11 @@ Route: {route} | Model: {model} | Source: User specified "/retry {retry_args}"
 
 USER EXPLICITLY REQUESTED {model.upper()} FOR RETRY. This is NOT a suggestion - it is a COMMAND.
 
-CRITICAL: Read the last query from session state (~/.claude/router-session.json) and spawn "claude-router:{subagent}".
+CRITICAL: Read the last query from session state (~/.claude/router-session.json) and spawn "{subagent}".
 DO NOT auto-escalate. DO NOT choose a different model. Use {model.upper()}.
 
 Example:
-Task(subagent_type="claude-router:{subagent}", prompt="<last query from session>", description="Retry with {model}")"""
+Task(subagent_type="{subagent}", prompt="<last query from session>", description="Retry with {model}")"""
 
                 output = {
                     "hookSpecificOutput": {
@@ -1026,56 +1000,55 @@ Task(subagent_type="claude-router:{subagent}", prompt="<last query from session>
     signals = result["signals"]
     method = result.get("method", "rules")
 
-    # Get metadata for orchestration/tool-intensive routing
+    # Metadata (tool-intensive / context); track router meta-questions
     metadata = result.get("metadata", {})
-
-    # Track exception if detected
     if is_exception:
         metadata["exception_type"] = exception_type
 
-    # Log routing decision to stats
-    log_routing_decision(route, confidence, method, signals, metadata)
+    # ── Delegation policy (v3.0) ──────────────────────────────────────────────
+    # CR delegates ONLY the real downgrades,work that moves OFF Opus:
+    #     standard          -> Sonnet subagent
+    #     substantive fast  -> Haiku  subagent
+    # It deliberately does NOT delegate (lets the main loop handle inline):
+    #     deep         -> main loop is already Opus; an Opus subagent would just
+    #                     add hand-off tax for no model change.
+    #     trivial fast -> short, non-tool prompts: the ~300-token Opus hand-off
+    #                     tax cancels the gain (confirmed). Answer inline instead.
+    # Non-delegated prompts are flagged no_delegate so they are NOT counted as a
+    # "kept off Opus" event. The count stays honest.
+    prompt_len = len(prompt.strip())
+    trivial_fast = (route == "fast" and prompt_len < 60 and not metadata.get("tool_intensive"))
+    if route == "deep" or trivial_fast:
+        metadata["no_delegate"] = True
 
-    # Update session state for multi-turn context awareness
+    log_routing_decision(route, confidence, method, signals, metadata)
     update_session_state(route, metadata)
 
-    # Map route to subagent and model
-    # Use opus-orchestrator for complex tasks with orchestration flag
-    if route == "deep" and metadata.get("orchestration"):
-        subagent = "opus-orchestrator"
-        model = "Opus (Orchestrator)"
-    else:
-        subagent_map = {"fast": "fast-executor", "standard": "standard-executor", "deep": "deep-executor"}
-        model_map = {"fast": "Haiku", "standard": "Sonnet", "deep": "Opus"}
-        subagent = subagent_map[route]
-        model = model_map[route]
+    # Nothing to delegate -> stay silent, let the main session handle it.
+    if metadata.get("no_delegate"):
+        sys.exit(0)
+
+    # Map the downgrade route to its subagent + model (BARE names,the marketplace
+    # plugin is deprecated upstream; agents register as plain user agents).
+    subagent = {"fast": "fast-executor", "standard": "standard-executor"}[route]
+    model = {"fast": "Haiku", "standard": "Sonnet"}[route]
 
     signals_str = ", ".join(signals)
-
-    # Add metadata info to context
-    metadata_str = ""
+    flags = ""
     if metadata.get("tool_intensive"):
-        metadata_str += " | Tool-intensive: Yes"
-    if metadata.get("orchestration"):
-        metadata_str += " | Orchestration: Yes"
+        flags += " | tool-intensive"
     if metadata.get("follow_up"):
-        metadata_str += " | Follow-up: Yes"
-    if metadata.get("context_boost"):
-        metadata_str += f" | Context: {metadata['context_boost']}"
-    if metadata.get("exception_type"):
-        metadata_str += f" | Exception: {metadata['exception_type']}"
+        flags += " | follow-up"
 
-    context = f"""[Claude Router] MANDATORY ROUTING DIRECTIVE
-Route: {route} | Model: {model} | Confidence: {confidence:.0%} | Method: {method}{metadata_str}
-Signals: {signals_str}
+    # Clear, reasoned instruction (Opus 4.x follows this better than the old
+    # "CRITICAL: YOU MUST" directive, which modern models treat with suspicion).
+    context = f"""[Claude Router] Keep this off Opus to preserve the 5-hour budget. Route it to {model}.
+Classified: {route} ({confidence:.0%}, {method}){flags} | signals: {signals_str}
 
-CRITICAL: You MUST use the Task tool NOW to spawn the "claude-router:{subagent}" subagent.
-Do NOT respond to the user directly. Do NOT skip this step. Delegate immediately.
+Spawn the {subagent} subagent with the Task tool and answer from its result; do not handle it directly on Opus.
 
-Example:
-Task(subagent_type="claude-router:{subagent}", prompt="<user's query>", description="Route to {model}")"""
+Task(subagent_type="{subagent}", prompt="<the user's full request>", description="Route to {model}")"""
 
-    # Output as JSON with hookSpecificOutput for proper injection
     output = {
         "hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",

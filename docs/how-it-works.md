@@ -1,119 +1,42 @@
 # How Claude Router Works
 
-## Claude Code: Default vs With Router
+## The problem it solves
 
-### Default Behavior (Even with Opus 4.5)
+Anthropic meters Max and Pro on a rolling 5-hour window (plus a weekly cap). Opus draws that window down far faster than Sonnet or Haiku, so a few heavy Opus hours can lock you out until it resets. Most day-to-day prompts (finding files, small fixes, tests, lookups, routine edits) do not need Opus. Run them on Opus anyway and you spend your budget on work a cheaper model would have done just as well.
 
-Opus 4.5 is excellent at using tools and spawning subagents - but there's a catch:
+## What it does
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                     DEFAULT CLAUDE CODE (Opus 4.5)                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  User: "Refactor the auth system across all files"                          │
-│                                                                              │
-│  OPUS receives query                                                         │
-│    ├─► OPUS spawns Explore agent ──► runs as OPUS ($$$)                     │
-│    ├─► OPUS spawns Plan agent ────► runs as OPUS ($$$)                      │
-│    ├─► OPUS reads files ──────────► OPUS doing simple reads ($$$)           │
-│    └─► OPUS makes edits ──────────► OPUS for each file ($$$)                │
-│                                                                              │
-│  Problem: Opus is smart enough to delegate, but subagents inherit           │
-│           the same expensive model. Simple file reads cost as much          │
-│           as architectural analysis.                                         │
-│                                                                              │
-│  Also: Simple queries like "what is JSON?" still go to Opus.                │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### With Claude Router (v2.0)
-
-Claude Router adds **cost-aware routing at every level**:
+On every prompt, a `UserPromptSubmit` hook classifies the request and, when it does not need Opus, routes it to a Sonnet or Haiku subagent. Genuine reasoning stays on Opus. Each routed-down prompt is counted as "kept off Opus."
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         WITH CLAUDE ROUTER                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  LEVEL 1: Initial Query Routing (before any work starts)                    │
-│  ─────────────────────────────────────────────────────────                  │
-│  "What is JSON?"  ─────────────────────►  HAIKU      (~$0.01)               │
-│  "Fix this typo"  ─────────────────────►  HAIKU      (~$0.01)               │
-│  "Run all tests"  ─────────────────────►  SONNET     (~$0.03)               │
-│  "Design microservice architecture" ───►  OPUS       (~$0.06)               │
-│                                                                              │
-│  LEVEL 2: Delegation Within Complex Tasks (v1.2 Orchestrator)               │
-│  ─────────────────────────────────────────────────────────────              │
-│  User: "Refactor the auth system across all files"                          │
-│                                                                              │
-│  OPUS ORCHESTRATOR receives query (detected as complex + tool-intensive)    │
-│    ├─► Spawns HAIKU to list files ────► cheap file enumeration ($)          │
-│    ├─► Spawns HAIKU to read files ────► cheap content gathering ($)         │
-│    ├─► OPUS analyzes and plans ───────► expensive reasoning ($$$)           │
-│    ├─► Spawns SONNET to edit files ───► balanced implementation ($$)        │
-│    └─► OPUS synthesizes & verifies ───► expensive final check ($$$)         │
-│                                                                              │
-│  Result: Opus does the thinking, cheaper models do the legwork              │
-│          Same quality, ~40% less cost on complex tasks                      │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+"what is a closure"                         -> answered inline (trivial, no hand-off)
+"find all callers of parseConfig"           -> Sonnet  (kept off Opus)
+"fix the login validation bug, add a test"  -> Sonnet  (kept off Opus)
+"where is the auth middleware defined"      -> Sonnet  (kept off Opus)
+"design a multi-region failover + security" -> Opus    (this is what Opus is for)
 ```
 
-### The Key Difference
+## A note on money
 
-| Aspect | Default Opus 4.5 | Claude Router |
-|--------|------------------|---------------|
-| Initial routing | Always Opus (or your default) | Right model for the task |
-| Subagent model | Inherits parent model | Explicitly cheaper models |
-| Simple queries | Opus overkill | Haiku (80% savings) |
-| File reads in complex tasks | Opus ($$$) | Haiku ($) |
-| Architectural decisions | Opus | Opus (same quality) |
-| Cost awareness | None | Built-in at every level |
+On a subscription you pay a flat fee, so this does **not** save dollars, and there are no dollar figures anywhere in this project. What it saves is your 5-hour budget: every prompt kept off Opus is budget you still have later, which means fewer "you've reached your limit" walls and more real working hours per day.
 
-**TL;DR**: Opus 4.5 is great at *what* to delegate. Claude Router adds *cost-aware* delegation - ensuring cheap work uses cheap models.
+(If you ever point Claude Code at the metered API instead of a subscription, the same routing does translate to real dollars, because you pay per token. That is not the design target here.)
 
----
+## Conservative about Opus, on purpose
 
-## Why This Matters: Three-Fold Savings
+When the classifier is unsure, it defaults to **Sonnet**, not Haiku. Sonnet is capable enough to avoid a wrong cheap answer that would send you back to Opus for a retry (which would burn the budget anyway). Opus is reserved for prompts with strong reasoning signals: architecture, security, system design, deep trade-off analysis.
 
-Intelligent routing creates a **win-win** for everyone:
+## Trivial and deep are left alone
 
-### 1. Consumer Savings (API Costs)
+Two cases are deliberately **not** delegated, because the Opus hand-off (reading a directive, spawning a subagent, relaying the result, roughly a few hundred Opus tokens) would cost more than it saves:
 
-LLM pricing has two components, and you save on both:
+- Trivial one-liners are answered inline on the main loop.
+- Genuine Opus-tier work stays on the main loop (it is already Opus; an Opus subagent would only add tax).
 
-| Model | Input (per 1M tokens) | Output (per 1M tokens) |
-|-------|----------------------|------------------------|
-| Haiku 4.5 | $1 | $5 |
-| Sonnet 4.5 | $3 | $15 |
-| Opus 4.5 | $5 | $25 |
+Neither is counted as a saving. The count stays honest.
 
-For a typical query (1K input, 2K output tokens):
-- **Opus 4.5 cost:** $0.005 + $0.05 = **$0.055**
-- **Haiku 4.5 cost:** $0.001 + $0.01 = **$0.011**
-- **Your savings:** ~80%
+## See it work
 
-### 2. Anthropic Savings (Compute Resources)
-
-Haiku is a much smaller, faster model than Opus. When simple queries are routed to Haiku:
-- Less GPU compute required per request
-- Lower inference latency (faster responses for you)
-- More efficient resource allocation across Anthropic's infrastructure
-- Frees up Opus capacity for queries that genuinely need it
-
-### 3. Better Developer Experience
-
-- Simple queries get instant answers (Haiku is faster)
-- Complex queries get thorough analysis (Opus when needed)
-- No manual model switching required
-
-### 4. Subscriber Benefits (Pro/Max Users)
-
-For Claude Pro and Max subscribers, intelligent routing means:
-- **Extended usage limits** - Smaller models use less of your monthly capacity
-- **Longer sessions** - Less context consumed = fewer auto-compacts
-- **Faster responses** - Haiku responds 3-5x faster than Opus
-
-**The result:** You pay less (or extend your subscription further), Anthropic uses fewer resources, and everyone gets appropriately-powered responses. This is sustainable AI usage.
+- `/router-stats` shows the kept-off-Opus tally (today / 5-hour window / week).
+- Your status line shows a live `⇩ today·week` segment, and flips to `CR⚠` if the router ever stops.
+- `/cr-doctor` verifies and repairs the wiring on demand.
