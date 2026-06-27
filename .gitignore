@@ -29,3 +29,6 @@ Thumbs.db
 # To share knowledge with your team, see knowledge/.gitignore
 knowledge/
 router-analytics.html
+
+# Session transcripts committed by accident (raw transcripts routinely contain secrets). Keep history private.
+conversations/
