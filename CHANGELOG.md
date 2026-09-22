@@ -2,6 +2,17 @@
 
 All notable changes to Claude Router will be documented in this file.
 
+## [3.2.0] - 2026-09-21
+
+"More aggressive." Same day as 3.1, after the first real run.
+
+### Changed
+- **Opus needs 2+ deep signals.** A single deep keyword ("compare", "complex", "scalable") no longer holds a prompt on Opus; it goes to Sonnet. **Exception:** any security signal (security, vulnerability, audit, exploit) is never demoted.
+- **Wider GPU tier.** Added explain/interpret this error or log, rewrite/reword/proofread/translate, name this file/branch, compare these texts, release notes and PR descriptions, sort/group/rank. Subject detection widened (this/these/pasted/error/config/csv...), paste threshold 1500 -> 800 chars.
+
+### Added
+- **Haiku lookups on any main loop.** "where is X defined", "find all", "list every caller", "which file" hand the finding to the Haiku executor even when the main loop is Sonnet; the main loop finishes the rest.
+
 ## [3.1.0] - 2026-09-21
 
 The "lowest model that does the job" release. v3.0 assumed the main loop is always Opus. It no longer has to be.

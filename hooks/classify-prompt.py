@@ -568,21 +568,33 @@ PATTERNS = {
     # (v3.1) Local-GPU tier: bulk text work a small local model does well.
     # Only fires when a `gpu` command exists on the host (see gpu_available()).
     "gpu": [
-        re.compile(r"\b(summari[sz]e|summary of|tl;?dr|recap|condense|digest)\b"),
-        re.compile(r"\b(extract|pull out|list) (every|all|the) .{0,30}(error|warning|name|url|date|field|fact|email|todo)s?\b"),
-        re.compile(r"\b(classify|categori[sz]e|tag|label) (these|this|each|every|the)\b"),
-        re.compile(r"\b(draft|write|suggest) (a |the )?(commit (message|subject)|changelog( entry| line)?)\b"),
-        re.compile(r"\b(reformat|convert) (this|these|the) .{0,30}(to|into) (json|yaml|csv|markdown|a table)\b"),
-        re.compile(r"\bwhat does (this|the) (log|diff|transcript|output) (say|show)\b"),
+        re.compile(r"\b(summari[sz]e|summary of|tl;?dr|recap|condense|digest|gist of)\b"),
+        re.compile(r"\b(extract|pull out|list|count|find) (every|all|the) .{0,30}(error|warning|name|url|date|field|fact|email|todo|number|ip|path|key)s?\b"),
+        re.compile(r"\b(classify|categori[sz]e|tag|label|sort|group|rank) (these|this|each|every|the)\b"),
+        re.compile(r"\b(draft|write|suggest) (a |the )?(commit (message|subject)|changelog( entry| line)?|release notes?|pr (title|description))\b"),
+        re.compile(r"\b(reformat|convert|turn) (this|these|the|it) .{0,30}(to|into) (json|yaml|csv|markdown|a table|a list|bullets)\b"),
+        re.compile(r"\bwhat does (this|the) (log|diff|transcript|output|error|stack ?trace) (say|show|mean)\b"),
+        re.compile(r"\b(explain|interpret) (this|the|these) (log|output|error|stack ?trace|diff|message)s?\b"),
+        re.compile(r"\b(rewrite|reword|rephrase|proofread|spell-?check|fix the (grammar|typos)|translate|simplify) (this|the|these|it|my)\b"),
+        re.compile(r"\b(name|title) (this|these|the) (file|note|session|branch|project)s?\b"),
+        re.compile(r"\bcompare (these|the) (two )?(files|texts|logs|outputs|versions)\b"),
     ],
     # Content the GPU tier should work on (a file, log, diff, transcript, paste).
     "gpu_subject": [
-        re.compile(r"\b(file|log|logs|diff|transcript|output|readme|doc|docs|notes|email|thread|article|page|changes|commits?)\b"),
-        re.compile(r"[\w./~-]+\.(md|txt|log|json|ya?ml|csv|ts|py|sh|qml|html)\b"),
+        re.compile(r"\b(file|log|logs|diff|transcript|output|readme|doc|docs|notes|email|thread|article|page|changes|commits?|error|stack ?trace|config|csv|json|yaml|paragraph|text|message|this|these|below|following|attached|pasted)\b"),
+        re.compile(r"[\w./~-]+\.(md|txt|log|json|ya?ml|csv|ts|py|sh|qml|html|conf|toml|ini)\b"),
+    ],
+    # (v3.2) Mechanical lookups a Haiku subagent does fine, even under a Sonnet main loop.
+    "haiku_lookup": [
+        re.compile(r"\b(find|search|locate|grep) (for |all |every |the |where )"),
+        re.compile(r"\bwhere (is|are|does|do) .{1,60}(defined|used|called|set|live|configured|declared)\b"),
+        re.compile(r"\b(list|show) (all|every|the) .{0,30}(files?|functions?|callers?|usages?|references?|imports?|hooks?|skills?|agents?|todos?)\b"),
+        re.compile(r"\bwhich (file|files|module|function) .{0,40}\b"),
+        re.compile(r"\bwhat (depends on|imports|uses|calls)\b"),
     ],
 }
 
-GPU_MIN_PASTE = 1500  # chars; a long paste is subject enough on its own
+GPU_MIN_PASTE = 800  # chars; a long paste is subject enough on its own
 
 
 def gpu_available() -> bool:
@@ -1102,13 +1114,31 @@ Task(subagent_type="{subagent}", prompt="<last query from session>", description
     metadata["main_model"] = main_model
     gpu_signals = [] if route == "deep" else (classify_gpu(prompt) if gpu_available() else [])
 
+    # (v3.2) Aggressive: a single deep keyword is not enough to spend Opus.
+    # Only 2+ deep signals (confidence >= 0.9) count as Opus-grade.
+    # Security work is the exception: one security signal is enough (Law: safety
+    # always gets the model it needs), so it is never demoted.
+    security = any(re.search(r"secur|vulnerab|audit|penetration|exploit", sig) for sig in signals)
+    if route == "deep" and security:
+        confidence = max(confidence, 0.9)
+    if route == "deep" and confidence < 0.9:
+        route = "standard"
+        metadata["demoted_from_deep"] = True
+    haiku_signals = [] if route == "deep" else [
+        m.group(0) for pat in PATTERNS["haiku_lookup"] if (m := pat.search(prompt.lower()))]
+
     if gpu_signals:
         route, signals = "gpu", gpu_signals
+    elif haiku_signals and main_model != "haiku":
+        # Lookups and sweeps go to Haiku whatever the main loop is.
+        route, signals = "fast", haiku_signals[:3]
+        metadata["tool_intensive"] = True
+        metadata["haiku_lookup"] = True
     elif main_model != "opus":
         # Already on a cheap main loop: never delegate sideways. Speak up only
         # when the prompt is strongly Opus-grade (2+ deep signals).
         metadata["no_delegate"] = True
-        if route == "deep" and confidence >= 0.9:
+        if route == "deep":
             metadata["suggest_opus"] = True
     elif route == "deep" or trivial_fast:
         metadata["no_delegate"] = True
@@ -1148,7 +1178,8 @@ Tell the user in one line and suggest `/model opus` for it; hooks cannot switch 
 
     # Clear, reasoned instruction (Opus 4.x follows this better than the old
     # "CRITICAL: YOU MUST" directive, which modern models treat with suspicion).
-    context = f"""[Claude Router] Keep this off Opus to preserve the 5-hour budget. Route it to {model}.
+    lead = ("Lookup/sweep: hand the finding to Haiku, then finish the rest yourself" if metadata.get("haiku_lookup") and main_model != "opus" else "Keep this off Opus to preserve the 5-hour budget")
+    context = f"""[Claude Router] {lead}. Route it to {model}.
 Classified: {route} ({confidence:.0%}, {method}){flags} | signals: {signals_str}
 
 Spawn the {subagent} subagent with the Task tool and answer from its result; do not handle it directly on Opus.
