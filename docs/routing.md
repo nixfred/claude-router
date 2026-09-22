@@ -30,3 +30,16 @@ Spawn the standard-executor subagent with the Task tool and answer from its resu
 ## Classification
 - **Rules (default):** zero latency, no API call, tuned for coding workflows.
 - **Hybrid (optional):** when rule confidence is below 70%, a Haiku check (~100ms, ~$0.001) improves accuracy on ambiguous prompts. Enable with `export ANTHROPIC_API_KEY=sk-ant-...`. Off by default; it also spends a few tokens against your 5-hour budget.
+
+## Main-model awareness and the GPU tier (v3.1)
+The best saving is not running Opus as the main loop at all. v3.1 detects the main model each turn:
+
+| Main loop | Prompt | What the hook does |
+|---|---|---|
+| any | bulk text work on a file/log/diff/paste (host has `gpu`) | directive: do it on the local GPU, verify, fall back if it fails |
+| Opus / Fable | standard / substantive fast | hand off to Sonnet / Haiku subagent (v3.0 behaviour) |
+| Opus / Fable | deep or trivial | silent, handled inline |
+| Sonnet / Haiku | strongly deep (2+ signals) | nudge: suggest `/model opus` in one line |
+| Sonnet / Haiku | anything else | silent, handled inline (no sideways hand-off) |
+
+Recommended setup: `"model": "sonnet"` in `settings.json`, switch to Opus with `/model opus` only when the nudge says so.

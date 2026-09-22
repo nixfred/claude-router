@@ -16,6 +16,8 @@ mkdir -p "$DEST/hooks/UserPromptSubmit" "$DEST/agents/claude-router" "$DEST/skil
 
 cp "$SRC/hooks/classify-prompt.py" "$DEST/hooks/UserPromptSubmit/classify-prompt.py"
 cp "$SRC/hooks/cr-doctor.py"       "$DEST/hooks/cr-doctor.py"
+cp "$SRC/hooks/cr-usage.py"        "$DEST/hooks/cr-usage.py"
+cp "$SRC/hooks/cr-record-exec.py"  "$DEST/hooks/cr-record-exec.py"
 echo "  hooks copied"
 
 cp "$SRC"/agents/*.md "$DEST/agents/claude-router/" 2>/dev/null || true

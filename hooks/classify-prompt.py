@@ -12,6 +12,7 @@ import sys
 import os
 import re
 import hashlib
+import shutil
 from pathlib import Path
 from datetime import datetime
 # Cross-platform file locking
@@ -564,7 +565,81 @@ PATTERNS = {
         re.compile(r"\band (also|then)\b.{0,50}\band (also|then)\b"),
         re.compile(r"\b(multiple|several|many) (tasks?|steps?|operations?)\b"),
     ],
+    # (v3.1) Local-GPU tier: bulk text work a small local model does well.
+    # Only fires when a `gpu` command exists on the host (see gpu_available()).
+    "gpu": [
+        re.compile(r"\b(summari[sz]e|summary of|tl;?dr|recap|condense|digest)\b"),
+        re.compile(r"\b(extract|pull out|list) (every|all|the) .{0,30}(error|warning|name|url|date|field|fact|email|todo)s?\b"),
+        re.compile(r"\b(classify|categori[sz]e|tag|label) (these|this|each|every|the)\b"),
+        re.compile(r"\b(draft|write|suggest) (a |the )?(commit (message|subject)|changelog( entry| line)?)\b"),
+        re.compile(r"\b(reformat|convert) (this|these|the) .{0,30}(to|into) (json|yaml|csv|markdown|a table)\b"),
+        re.compile(r"\bwhat does (this|the) (log|diff|transcript|output) (say|show)\b"),
+    ],
+    # Content the GPU tier should work on (a file, log, diff, transcript, paste).
+    "gpu_subject": [
+        re.compile(r"\b(file|log|logs|diff|transcript|output|readme|doc|docs|notes|email|thread|article|page|changes|commits?)\b"),
+        re.compile(r"[\w./~-]+\.(md|txt|log|json|ya?ml|csv|ts|py|sh|qml|html)\b"),
+    ],
 }
+
+GPU_MIN_PASTE = 1500  # chars; a long paste is subject enough on its own
+
+
+def gpu_available() -> bool:
+    """The local-GPU tier only exists on hosts with the `gpu` wrapper (vic)."""
+    return shutil.which("gpu") is not None
+
+
+def classify_gpu(prompt: str) -> list:
+    """Return GPU-tier signals, or [] when the prompt is not local-GPU work."""
+    p = prompt.lower()
+    verbs = [m.group(0) for pat in PATTERNS["gpu"] if (m := pat.search(p))]
+    if not verbs:
+        return []
+    subject = len(prompt) >= GPU_MIN_PASTE or any(pat.search(p) for pat in PATTERNS["gpu_subject"])
+    return verbs[:3] if subject else []
+
+
+def detect_main_model(input_data: dict) -> str:
+    """Tier of the model running the main loop: 'opus', 'sonnet' or 'haiku'.
+
+    The hook input carries no model field, so read the most recent assistant
+    entry in the transcript (reflects a /model switch from the next reply on),
+    falling back to settings.json's "model" for the first turn of a session.
+    Fable counts as the top tier alongside Opus. Unknown -> 'opus' (the old
+    behaviour, so a detection failure never silences routing).
+    """
+    name = ""
+    tp = input_data.get("transcript_path")
+    if tp:
+        try:
+            with open(tp, "rb") as f:
+                f.seek(0, 2)
+                f.seek(max(0, f.tell() - 512 * 1024))
+                lines = f.read().decode("utf-8", "replace").splitlines()
+            for line in reversed(lines):
+                if '"assistant"' not in line or '"model"' not in line:
+                    continue
+                try:
+                    m = json.loads(line).get("message", {}).get("model", "")
+                except json.JSONDecodeError:
+                    continue
+                if m and m != "<synthetic>":
+                    name = m
+                    break
+        except OSError:
+            pass
+    if not name:
+        try:
+            name = json.loads((Path.home() / ".claude" / "settings.json").read_text()).get("model", "")
+        except Exception:
+            name = ""
+    name = name.lower()
+    if "sonnet" in name:
+        return "sonnet"
+    if "haiku" in name:
+        return "haiku"
+    return "opus"
 
 
 def get_api_key():
@@ -650,7 +725,7 @@ def log_routing_decision(route: str, confidence: float, method: str, signals: li
         today = now.strftime("%Y-%m-%d")
 
         # "kept off Opus": cheaper tier AND actually delegated
-        kept = route in ("fast", "standard") and not metadata.get("no_delegate")
+        kept = route in ("fast", "standard", "gpu") and not metadata.get("no_delegate")
 
         stats["total_queries"] += 1
         stats["routes"][route] = stats["routes"].get(route, 0) + 1
@@ -1018,11 +1093,43 @@ Task(subagent_type="{subagent}", prompt="<last query from session>", description
     # "kept off Opus" event. The count stays honest.
     prompt_len = len(prompt.strip())
     trivial_fast = (route == "fast" and prompt_len < 60 and not metadata.get("tool_intensive"))
-    if route == "deep" or trivial_fast:
+
+    # ── (v3.1) Main-model awareness + local-GPU tier ─────────────────────────
+    # The v3.0 policy assumed the main loop is Opus. When it is Sonnet, handing
+    # "standard" work to a Sonnet subagent is pure hand-off tax, and the only
+    # useful signal is the reverse: "this one is Opus-grade, suggest /model".
+    main_model = detect_main_model(input_data)
+    metadata["main_model"] = main_model
+    gpu_signals = [] if route == "deep" else (classify_gpu(prompt) if gpu_available() else [])
+
+    if gpu_signals:
+        route, signals = "gpu", gpu_signals
+    elif main_model != "opus":
+        # Already on a cheap main loop: never delegate sideways. Speak up only
+        # when the prompt is strongly Opus-grade (2+ deep signals).
+        metadata["no_delegate"] = True
+        if route == "deep" and confidence >= 0.9:
+            metadata["suggest_opus"] = True
+    elif route == "deep" or trivial_fast:
         metadata["no_delegate"] = True
 
     log_routing_decision(route, confidence, method, signals, metadata)
     update_session_state(route, metadata)
+
+    signals_str = ", ".join(signals)
+
+    if route == "gpu":
+        context = f"""[Claude Router] Local-GPU tier: this is bulk text work for the local GPU, not cloud tokens.
+Classified: gpu | signals: {signals_str} | main: {main_model}
+Run the heavy part locally: `gpu "<instruction>" <file>` or pipe it (`cmd | gpu --bulk "<instruction>"`; `gpu --json '<schema>' <file>` for structured facts). Verify the output before relying on it, never execute what it returns, and if gpu exits non-zero (3 = Ollama down) do it yourself and say so. Mention in one line that you used the GPU."""
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}))
+        sys.exit(0)
+
+    if metadata.get("suggest_opus"):
+        context = f"""[Claude Router] This looks Opus-grade ({signals_str}) and the main loop is {main_model.capitalize()}.
+Tell the user in one line and suggest `/model opus` for it; hooks cannot switch the model. Proceed on {main_model.capitalize()} unless they switch."""
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}))
+        sys.exit(0)
 
     # Nothing to delegate -> stay silent, let the main session handle it.
     if metadata.get("no_delegate"):
@@ -1033,7 +1140,6 @@ Task(subagent_type="{subagent}", prompt="<last query from session>", description
     subagent = {"fast": "fast-executor", "standard": "standard-executor"}[route]
     model = {"fast": "Haiku", "standard": "Sonnet"}[route]
 
-    signals_str = ", ".join(signals)
     flags = ""
     if metadata.get("tool_intensive"):
         flags += " | tool-intensive"

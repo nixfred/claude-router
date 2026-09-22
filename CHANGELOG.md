@@ -2,6 +2,20 @@
 
 All notable changes to Claude Router will be documented in this file.
 
+## [3.1.0] - 2026-09-21
+
+The "lowest model that does the job" release. v3.0 assumed the main loop is always Opus. It no longer has to be.
+
+### Added
+- **Main-model awareness.** The hook reads the current main-loop model from the session transcript (falls back to `settings.json` `model` on the first turn). Fable counts as top tier with Opus; unknown falls back to the v3.0 behaviour.
+- **Local-GPU tier.** On hosts with a `gpu` command (a local Ollama wrapper), summarise / extract / classify / draft-commit-message / reformat prompts that name a file, log, diff or transcript (or paste 1500+ chars) get a directive to do the bulk work on the local GPU first. Deep signals always override it. Silent on hosts without `gpu`.
+- **"Opus-grade" nudge.** When the main loop is Sonnet and a prompt carries 2+ deep signals, the hook tells the model to suggest `/model opus` in one line. Hooks cannot switch models, so it suggests rather than forces.
+- **`cr-usage.py`** (status-line helper: today's real request counts per model family, deduped by request id) and **`cr-record-exec.py`** (SubagentStop hook: counts executor runs that genuinely ran on Haiku/Sonnet). Previously lived only on one host.
+
+### Changed
+- **No sideways hand-off.** With a Sonnet main loop, "standard" prompts are handled inline. A Sonnet-to-Sonnet subagent hop was pure overhead.
+- GPU-tier routes count as kept off Opus.
+
 ## [3.0.0] - 2026-06-07
 
 The "keep working, not save money" release. Rebuilt around surviving Max/Pro 5-hour rate limits instead of chasing fictional dollar savings.
