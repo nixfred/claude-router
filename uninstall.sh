@@ -1,111 +1,92 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Claude Router uninstaller.
 #
-# Claude Router - Uninstall Script
-# https://github.com/0xrdan/claude-router
+#   ./uninstall.sh        remove the v4 mod (tier-router) and this marketplace
+#   ./uninstall.sh --v3   retire a v3 install: its python hooks, their
+#                         settings.json entries, executor agents and skills
 #
-# Removes Claude Router files installed via install.sh
-#
+# Nothing is deleted: v3 files and a settings.json backup are moved to
+# ~/.claude/.trash/claude-router-v3-<time>/ so any of it can be put back.
+# cr-usage.py stays where it is; status lines read it.
+set -euo pipefail
 
-set -e
+CLAUDE_DIR="$HOME/.claude"
+SETTINGS="$CLAUDE_DIR/settings.json"
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+retire_v3() {
+  local trash="$CLAUDE_DIR/.trash/claude-router-v3-$(date +%Y%m%d-%H%M%S)"
+  local moved=0
 
-echo -e "${BLUE}"
-echo "╔═══════════════════════════════════════════════╗"
-echo "║        Claude Router Uninstaller              ║"
-echo "╚═══════════════════════════════════════════════╝"
-echo -e "${NC}"
+  # 1. Unwire first: v3's SessionStart doctor rebuilds whatever it finds missing.
+  if [ -f "$SETTINGS" ] && jq -e '[.hooks[]?[]?.hooks[]?.command // ""] | any(test("classify-prompt\\.py|cr-doctor\\.py|cr-record-exec\\.py"))' "$SETTINGS" >/dev/null 2>&1; then
+    mkdir -p "$trash"
+    cp -p "$SETTINGS" "$trash/settings.json.bak"
+    jq '.hooks |= (
+          with_entries(.value |= (
+            map(.hooks |= map(select((.command // "") | test("classify-prompt\\.py|cr-doctor\\.py|cr-record-exec\\.py") | not)))
+            | map(select((.hooks | length) > 0))
+          ))
+          | with_entries(select((.value | length) > 0))
+        )' "$SETTINGS" > "$SETTINGS.cr-tmp"
+    jq -e . "$SETTINGS.cr-tmp" >/dev/null
+    mv "$SETTINGS.cr-tmp" "$SETTINGS"
+    echo "  unwired v3 hooks from settings.json (backup: $trash/settings.json.bak)"
+  fi
 
-# Determine uninstall location
-echo -e "${YELLOW}Where did you install Claude Router?${NC}"
-echo "  1) Current project (./.claude/)"
-echo "  2) Global install (~/.claude/)"
-echo ""
-read -p "Choose (1 or 2): " choice
-
-case $choice in
-    1)
-        INSTALL_PATH="./.claude"
-        ;;
-    2)
-        INSTALL_PATH="$HOME/.claude"
-        ;;
-    *)
-        echo -e "${RED}Invalid choice. Exiting.${NC}"
-        exit 1
-        ;;
-esac
-
-if [ ! -d "$INSTALL_PATH" ]; then
-    echo -e "${RED}Directory $INSTALL_PATH does not exist.${NC}"
-    exit 1
-fi
-
-echo ""
-echo -e "${YELLOW}This will remove:${NC}"
-echo "  - $INSTALL_PATH/hooks/classify-prompt.py"
-echo "  - $INSTALL_PATH/hooks/venv/ (if exists)"
-echo "  - $INSTALL_PATH/agents/fast-executor/"
-echo "  - $INSTALL_PATH/agents/standard-executor/"
-echo "  - $INSTALL_PATH/agents/deep-executor/"
-echo "  - $INSTALL_PATH/skills/route/"
-echo "  - $INSTALL_PATH/skills/router-stats/"
-echo "  - UserPromptSubmit hook from settings.json"
-echo ""
-read -p "Continue? (y/n): " confirm
-
-if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
-    echo -e "${YELLOW}Aborted.${NC}"
-    exit 0
-fi
-
-echo ""
-echo -e "${BLUE}Removing files...${NC}"
-
-# Remove classifier and venv
-rm -f "$INSTALL_PATH/hooks/classify-prompt.py"
-rm -rf "$INSTALL_PATH/hooks/venv"
-
-# Remove agents
-rm -rf "$INSTALL_PATH/agents/fast-executor"
-rm -rf "$INSTALL_PATH/agents/standard-executor"
-rm -rf "$INSTALL_PATH/agents/deep-executor"
-
-# Remove skills
-rm -rf "$INSTALL_PATH/skills/route"
-rm -rf "$INSTALL_PATH/skills/router-stats"
-
-# Clean up empty directories
-rmdir "$INSTALL_PATH/agents" 2>/dev/null || true
-rmdir "$INSTALL_PATH/skills" 2>/dev/null || true
-
-# Update settings.json to remove UserPromptSubmit hook
-SETTINGS_FILE="$INSTALL_PATH/settings.json"
-if [ -f "$SETTINGS_FILE" ]; then
-    echo -e "${BLUE}Updating settings.json...${NC}"
-
-    if command -v jq &> /dev/null; then
-        # Use jq to remove the hook
-        jq 'del(.hooks.UserPromptSubmit)' "$SETTINGS_FILE" > "$SETTINGS_FILE.tmp"
-
-        # If hooks object is now empty, remove it too
-        jq 'if .hooks == {} then del(.hooks) else . end' "$SETTINGS_FILE.tmp" > "$SETTINGS_FILE"
-        rm -f "$SETTINGS_FILE.tmp"
-
-        echo -e "${GREEN}Removed UserPromptSubmit hook from settings.json${NC}"
-    else
-        echo -e "${YELLOW}jq not installed. Please manually remove UserPromptSubmit from:${NC}"
-        echo "  $SETTINGS_FILE"
+  # 2. Move v3's files aside.
+  for f in hooks/UserPromptSubmit/classify-prompt.py hooks/cr-doctor.py hooks/cr-record-exec.py agents/claude-router; do
+    if [ -e "$CLAUDE_DIR/$f" ]; then
+      mkdir -p "$trash/$(dirname "$f")"
+      mv "$CLAUDE_DIR/$f" "$trash/$f"
+      echo "  moved $f"
+      moved=$((moved + 1))
     fi
+  done
+
+  # 3. v3's skills, recognised by their exact description line, never by name alone.
+  local descriptions=(
+    'Manually route a query to the optimal Claude model (Haiku/Sonnet/Opus)'
+    'Use when user says "router stats", "/router-stats"'
+    'Use when user says "cr-doctor", "/cr-doctor"'
+    'Retry the last query with an escalated model'
+    'Extract and persist insights from the current conversation to the knowledge base'
+    'Display knowledge base status and recent learnings'
+    'Execute complex multi-step tasks with forked subtask contexts'
+    'Generate HTML analytics dashboard for routing statistics'
+    'List and toggle official plugin integrations'
+    'Enable continuous learning mode for automatic insight extraction'
+    'Disable continuous learning mode'
+    'Clear the knowledge base and start fresh'
+  )
+  for skill in route router-stats cr-doctor retry learn knowledge orchestrate router-analytics router-plugins learn-on learn-off learn-reset; do
+    local file="$CLAUDE_DIR/skills/$skill/SKILL.md"
+    [ -f "$file" ] || continue
+    local line
+    line="$(grep -m1 '^description:' "$file" || true)"
+    for d in "${descriptions[@]}"; do
+      if [[ "$line" == "description: $d"* ]]; then
+        mkdir -p "$trash/skills"
+        mv "$CLAUDE_DIR/skills/$skill" "$trash/skills/$skill"
+        echo "  moved skills/$skill"
+        moved=$((moved + 1))
+        break
+      fi
+    done
+  done
+
+  if [ -d "$trash" ]; then
+    echo "v3 retired. Everything removed is in $trash"
+  else
+    echo "No v3 install found."
+  fi
+}
+
+if [ "${1:-}" = "--v3" ]; then
+  retire_v3
+  exit 0
 fi
 
-echo ""
-echo -e "${GREEN}╔═══════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║         Uninstall Complete!                   ║${NC}"
-echo -e "${GREEN}╚═══════════════════════════════════════════════╝${NC}"
-echo ""
-echo -e "${YELLOW}Note: Start a new Claude Code session for changes to take effect.${NC}"
+echo "Removing the tier-router mod..."
+claude plugin uninstall tier-router@claude-router --scope user || true
+claude plugin marketplace remove claude-router || true
+echo "Done. Start a new Claude Code session for it to take effect."

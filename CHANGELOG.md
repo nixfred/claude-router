@@ -2,6 +2,36 @@
 
 All notable changes to Claude Router will be documented in this file.
 
+## [4.0.0] - 2026-10-08
+
+"It routes now." Rebuilt on Claude Code's mod API. Versions 1 to 3 asked the main model to delegate; v4 sets the model of each request itself.
+
+### Changed
+- **Now a Claude Code mod, `tier-router`.** The plugin is named `tier-router` because plugin names starting with `claude-` are reserved; the repo and marketplace keep `claude-router`. TypeScript function hooks in `hooks/register.ts` replace the python `UserPromptSubmit` hook. The v3.2 classifier rules are kept, ported to `hooks/classify.ts`, with one fix: `vulnerab` now matches "vulnerability".
+- **The main loop is routed per turn.** `turn.step` names the model of every main-loop request. Standard work, lookups and quick questions run on Sonnet. Deep and security work stays on the session model. A follow-up to a deep turn stays deep. The decision is made once per turn, never mid-turn.
+- **Subagents are routed at spawn.** `agent.spawn` sends Explore and lookups to Haiku and other work to Sonnet. Explicit models, forks, teammates, workflow agents and deep agent types are left alone. Custom agents are routed only with `routeCustomAgents`.
+- **Counting is real.** Per day: main turns by tier, turns down and lifted, switches held back by the cache, subagents sent down, and requests and tokens per model as the API reported them.
+
+### Added
+- **Cache-aware switching.** Each model's prompt-cache state is tracked. A down-switch whose extra rewrite exceeds `maxSwitchTokens` (default 60k) is skipped.
+- **Verified model ids.** Ids are learned from the API, or taken from `ANTHROPIC_DEFAULT_*_MODEL`, or derived from the running model and verified once with a one-token call. A guessed id is never sent.
+- **Budget awareness.** The real 5-hour and 7-day windows come from `session.measure`. When the budget runs hot, optional lifts stop and down-switches are taken more eagerly.
+- **Lift to Opus.** On a Sonnet session, security turns are lifted to Opus (`lift`: security, deep or off). Other deep turns get a one-line `/model opus` suggestion.
+- **`/cr`.** Shows status, and switches mode for the session: full, subagents, dry run or off, plus `pin <model>` and `unpin`. The status line shows the last route and the 5h %.
+- `userConfig` options: `mode`, `mainFloor`, `lift`, `maxSwitchTokens`, `cacheTtlMinutes`, `routeCustomAgents`.
+- Tests (`claude plugin test .`) and a marketplace file (`/plugin install tier-router --marketplace nixfred/claude-router`).
+- `uninstall.sh --v3` retires a v3 install. It moves the files to `~/.claude/.trash` and backs up `settings.json`. It only moves skills whose description is v3's own.
+
+### Removed
+- The python classifier hook, `cr-doctor` self-heal and `cr-record-exec`. A plugin install replaces the settings surgery they existed for.
+- The executor agents, `/route`, `/retry`, `/orchestrate`, `/router-analytics`, `/router-plugins` and the knowledge and learning system.
+- The duplicate `.claude-plugin/` tree, `scripts/` (one of which committed and pushed on compaction), and the v2-era docs.
+- The Haiku-LLM fallback classifier. It needed an `ANTHROPIC_API_KEY` that subscription logins do not have, so it never ran.
+
+### Notes
+- `tools/cr-usage.py` (moved from `hooks/`) still prints real per-model request counts from transcripts for status lines.
+- The original upstream, 0xrdan/claude-router, has been deleted. This fork is the live line.
+
 ## [3.2.0] - 2026-09-21
 
 "More aggressive." Same day as 3.1, after the first real run.

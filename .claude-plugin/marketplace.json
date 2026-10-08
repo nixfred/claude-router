@@ -1,0 +1,6 @@
+{
+  "name": "claude-router",
+  "description": "Claude Router: tier-router, a Claude Code mod that routes every request to the lowest model that does the job.",
+  "owner": { "name": "Fred Nix" },
+  "plugins": [{ "name": "tier-router", "source": "./" }]
+}

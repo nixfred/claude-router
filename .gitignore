@@ -1,20 +1,16 @@
-# Python
+# Written by Claude Code when it loads the mod from this folder (self-ignored too)
+.claude-plugin/types/
+
+# Python (tools/)
 __pycache__/
 *.py[cod]
-*$py.class
-.Python
-venv/
-.venv/
-*.egg-info/
 
-# Virtual environment (created by install.sh)
-.claude/hooks/venv/
+# Node tooling, if any
+node_modules/
 
-# OS
+# OS / editors
 .DS_Store
 Thumbs.db
-
-# IDE
 .idea/
 .vscode/
 *.swp
@@ -23,12 +19,6 @@ Thumbs.db
 # Environment
 .env
 .env.local
-
-# User-generated content (Claude Router creates these locally)
-# These may contain project-specific or sensitive information
-# To share knowledge with your team, see knowledge/.gitignore
-knowledge/
-router-analytics.html
 
 # Session transcripts committed by accident (raw transcripts routinely contain secrets). Keep history private.
 conversations/

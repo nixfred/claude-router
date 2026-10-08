@@ -1,42 +1,49 @@
-# How Claude Router Works
+# How it works
 
-## The problem it solves
+Three files, no runtime dependencies:
 
-Anthropic meters Max and Pro on a rolling 5-hour window (plus a weekly cap). Opus draws that window down far faster than Sonnet or Haiku, so a few heavy Opus hours can lock you out until it resets. Most day-to-day prompts (finding files, small fixes, tests, lookups, routine edits) do not need Opus. Run them on Opus anyway and you spend your budget on work a cheaper model would have done just as well.
+- `hooks/classify.ts` names the kind of work in a prompt: `deep`, `standard`, `lookup`, `fast`, `gpu`, or `skip`.
+- `hooks/policy.ts` turns that into a model, for the main loop (`decideMain`) and for a subagent (`decideSpawn`), and prices prompt-cache rewrites.
+- `hooks/register.ts` wires both to Claude Code's mod events.
 
-## What it does
+## One turn
 
-On every prompt, a `UserPromptSubmit` hook classifies the request and, when it does not need Opus, routes it to a Sonnet or Haiku subagent. Genuine reasoning stays on Opus. Each routed-down prompt is counted as "kept off Opus."
+1. **`prompt.submit`** records where the prompt came from. Typed prompts (`composer`, `bridge`, `sdk`, scheduled triggers) are classified; notifications and peer messages keep whatever is running. A GPU-tier prompt gets a hidden note telling the model to do the bulk work with the local `gpu` command. An Opus-grade prompt on a Sonnet session that is not lifted gets a note to suggest `/model opus`.
+2. **`turn.start`** classifies the text the turn begins with.
+3. **`turn.step`**, the first request of the turn, decides the turn's model once:
+   - deep or security: the session model, or Opus when security lifts a Sonnet session;
+   - a follow-up to a deep turn: deep again;
+   - everything else: Sonnet (or Haiku for lookups if `mainFloor` allows), **if** the switch is cheap.
+   Every later request of the turn carries the same model, so the cache is never rewritten inside a turn.
+4. After each request it records which model answered, how big the context was, and the tokens the API reported.
+5. **`turn.complete`** remembers the turn's route (for follow-ups) and saves the day's counts.
 
-```
-"what is a closure"                         -> answered inline (trivial, no hand-off)
-"find all callers of parseConfig"           -> Sonnet  (kept off Opus)
-"fix the login validation bug, add a test"  -> Sonnet  (kept off Opus)
-"where is the auth middleware defined"      -> Sonnet  (kept off Opus)
-"design a multi-region failover + security" -> Opus    (this is what Opus is for)
-```
+## The cache rule
 
-## A note on money
+Each model has its own prompt cache. A request on a model whose cache is cold pays to write the whole conversation again. The router keeps a mark per model: when it last answered and how many messages the conversation had then. For a candidate switch it estimates:
 
-On a subscription you pay a flat fee, so this does **not** save dollars, and there are no dollar figures anywhere in this project. What it saves is your 5-hour budget: every prompt kept off Opus is budget you still have later, which means fewer "you've reached your limit" walls and more real working hours per day.
+- tokens the cheaper model must write now: everything, if its cache is cold or older than the TTL or the conversation was compacted since; otherwise only the messages added since its mark;
+- tokens staying put would write: the same estimate for the current model.
 
-(If you ever point Claude Code at the metered API instead of a subscription, the same routing does translate to real dollars, because you pay per token. That is not the design target here.)
+The difference is the extra cost of switching. Above `maxSwitchTokens` the switch is skipped and counted as "held by cache". Lifts for deep and security work ignore the cost; the job needs the model.
 
-## Conservative about Opus, on purpose
+At a session's start both caches are cold, so the first switch is free. After a few turns on Sonnet, coming back from an Opus turn costs only the messages since, so the router can move between the two without paying for the whole conversation each time.
 
-When the classifier is unsure, it defaults to **Sonnet**, not Haiku. Sonnet is capable enough to avoid a wrong cheap answer that would send you back to Opus for a retry (which would burn the budget anyway). Opus is reserved for prompts with strong reasoning signals: architecture, security, system design, deep trade-off analysis.
+## Subagents
 
-## Trivial and deep are left alone
+**`agent.spawn`** fires before a subagent starts. A spawn that names a model, a fork (which always inherits), a teammate or a workflow agent is left alone. For the rest:
 
-Two cases are deliberately **not** delegated, because the Opus hand-off (reading a directive, spawning a subagent, relaying the result, roughly a few hundred Opus tokens) would cost more than it saves:
+- deep or security work, or a deep agent type (security, architect, algorithm, plan): left alone;
+- built-in Explore, lookups and quick questions: Haiku;
+- other work: Sonnet;
+- never above the parent's tier.
 
-- Trivial one-liners are answered inline on the main loop.
-- Genuine Opus-tier work stays on the main loop (it is already Opus; an Opus subagent would only add tax).
+Custom agents (yours, or a plugin's) are only routed with `routeCustomAgents`, because a mod cannot see an agent file's own `model:`.
 
-Neither is counted as a saving. The count stays honest.
+## Budget awareness
 
-## See it work
+**`session.measure`** carries the real rate-limit windows (`five_hour`, `seven_day`). Past 80% of five hours or 90% of seven days the router stops optional lifts and doubles the cache allowance for switching down.
 
-- `/router-stats` shows the kept-off-Opus tally (today / 5-hour window / week).
-- Your status line shows a live `⇩ today·week` segment, and flips to `CR⚠` if the router ever stops.
-- `/cr-doctor` verifies and repairs the wiring on demand.
+## What gets counted
+
+Per day, in the mod's own store: main turns by tier, turns down and lifted, switches held by the cache, subagents sent down by tier, and requests and tokens per model as the API reported them, including subagents' requests. `/cr` shows today's.

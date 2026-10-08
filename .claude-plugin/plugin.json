@@ -1,47 +1,51 @@
 {
-  "name": "claude-router",
-  "version": "3.0.0",
-  "description": "Routing layer for Claude Code that keeps work off Opus to survive Max/Pro 5-hour rate limits. Honest kept-off-Opus counting (no dollar fiction), conservative Opus routing, a live status-line tally, and a self-heal layer so it never silently dies.",
-  "author": {
-    "name": "Fred Nix",
-    "url": "https://github.com/nixfred"
-  },
+  "name": "tier-router",
+  "version": "4.0.0",
+  "description": "Model routing that actually routes: a Claude Code mod that sets the model of every main-loop request and every subagent spawn to the lowest tier that does the job, lifts for deep and security work, and never takes a switch whose prompt-cache rewrite costs more than it saves.",
+  "author": { "name": "Fred Nix", "url": "https://github.com/nixfred" },
   "homepage": "https://github.com/nixfred/claude-router",
   "repository": "https://github.com/nixfred/claude-router",
   "license": "MIT",
-  "keywords": ["routing", "rate-limit", "5-hour-limit", "model-selection", "haiku", "sonnet", "opus", "self-healing", "claude-code"],
-  "agents": [
-    "./agents/fast-executor.md",
-    "./agents/standard-executor.md",
-    "./agents/deep-executor.md",
-    "./agents/opus-orchestrator.md"
-  ],
-  "commands": [
-    "./commands/route.md",
-    "./commands/router-stats.md",
-    "./commands/cr-doctor.md",
-    "./commands/learn.md",
-    "./commands/learn-on.md",
-    "./commands/learn-off.md",
-    "./commands/knowledge.md",
-    "./commands/learn-reset.md",
-    "./commands/orchestrate.md",
-    "./commands/router-analytics.md",
-    "./commands/retry.md",
-    "./commands/router-plugins.md"
-  ],
-  "skills": [
-    "./skills/route/SKILL.md",
-    "./skills/router-stats/SKILL.md",
-    "./skills/cr-doctor/SKILL.md",
-    "./skills/learn/SKILL.md",
-    "./skills/learn-on/SKILL.md",
-    "./skills/learn-off/SKILL.md",
-    "./skills/knowledge/SKILL.md",
-    "./skills/learn-reset/SKILL.md",
-    "./skills/orchestrate/SKILL.md",
-    "./skills/router-analytics/SKILL.md",
-    "./skills/retry/SKILL.md",
-    "./skills/router-plugins/SKILL.md"
-  ]
+  "keywords": ["routing", "model-selection", "rate-limit", "5-hour-limit", "haiku", "sonnet", "opus", "mod", "claude-code"],
+  "userConfig": {
+    "mode": {
+      "type": "string",
+      "title": "Routing mode",
+      "description": "full: route the main loop and subagents. subagents: route spawns only. advise: dry run, show what it would do. off.",
+      "options": ["full", "subagents", "advise", "off"],
+      "default": "full"
+    },
+    "mainFloor": {
+      "type": "string",
+      "title": "Main-loop floor",
+      "description": "The lowest model the main loop may drop to for lookups and quick questions.",
+      "options": ["sonnet", "haiku"],
+      "default": "sonnet"
+    },
+    "lift": {
+      "type": "string",
+      "title": "Lift to Opus",
+      "description": "When the session runs below Opus, which turns are lifted to Opus on their own: security only, every deep turn, or none (a one-line suggestion instead).",
+      "options": ["security", "deep", "off"],
+      "default": "security"
+    },
+    "maxSwitchTokens": {
+      "type": "number",
+      "title": "Max cache rewrite per switch",
+      "description": "A down-switch that would force more than this many tokens to be re-cached on the cheaper model is skipped.",
+      "default": 60000
+    },
+    "cacheTtlMinutes": {
+      "type": "number",
+      "title": "Prompt cache TTL (minutes)",
+      "description": "How long a model's prompt cache is assumed to stay warm.",
+      "default": 60
+    },
+    "routeCustomAgents": {
+      "type": "boolean",
+      "title": "Route custom agents",
+      "description": "Also send your own and plugin agents (not just built-ins) to a cheaper model when they were spawned without one. Deep agent types (security, architect, plan) are never sent down.",
+      "default": false
+    }
+  }
 }

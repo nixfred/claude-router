@@ -2,69 +2,59 @@
 
 ### Stop hitting the wall.
 
-Claude Router keeps your heavy model in reserve so your Claude Code session does not die at "you've reached your 5-hour limit." It quietly routes the prompts that do not need Opus down to Sonnet or Haiku, counts every time it does, and shows you the tally live on your status line.
+Claude Router keeps your heavy model in reserve so your Claude Code session does not die at "you've reached your 5-hour limit." Version 4 is a Claude Code **mod** (`tier-router`): it sets the model of every request itself, sending each turn and each subagent to the lowest model that does the job, and it shows you what it did on your status line.
 
 > **Read this first, because it is the whole point.**
-> If you are on a Max or Pro **subscription**, this tool does **not** save you money. You pay the same flat fee no matter what. There are no dollar figures in this project, and any you may have seen in older versions were fiction.
+> If you are on a Max or Pro **subscription**, this tool does **not** save you money. You pay the same flat fee no matter what. There are no dollar figures in this project.
 >
-> What it saves is your **5-hour budget**. Opus burns that budget far faster than Sonnet or Haiku. Every prompt this router keeps off Opus is budget you still have later, which means fewer walls, more hours of real work per day, and you stay in flow instead of staring at a cooldown timer.
+> What it saves is your **5-hour and weekly budget**. Opus burns it far faster than Sonnet or Haiku. Every request kept off Opus is budget you still have later: fewer walls, more hours of real work per day.
 >
 > The goal is not cheaper. The goal is **to keep working.**
 
 ---
 
-## Why this exists
+## What changed in v4
 
-Anthropic meters Max and Pro on a rolling 5-hour window. Run everything on Opus and you can drain that window in well under an hour on a heavy day, then you are locked out until it resets. Most of what you ask an AI to do in a day does not actually need the most expensive model: finding files, fixing a small bug, adding a test, looking up where something is defined, routine edits. Sonnet handles those just fine.
+Versions 1 to 3 were a `UserPromptSubmit` hook that guessed the kind of work and then *asked* the main model to hand it to a Haiku or Sonnet subagent. The model could ignore the request, every hand-off cost an extra turn, and the main loop itself never left Opus.
 
-Claude Router watches each prompt, decides whether it genuinely needs Opus, and if it does not, hands it to a cheaper model so your Opus budget lasts. You reserve the expensive model for the work that earns it: architecture, security, hard reasoning, the stuff that is actually worth a wall.
+Claude Code now has a mod API (function hooks), and two of its events are exactly what a router needs:
 
-You do not have to think about it. It runs on every prompt, forever, and it tells you exactly how often it saved your bacon.
+- **`turn.step`** sees every model request before it is sent and can name a different model for it.
+- **`agent.spawn`** sees every subagent before it starts and can name its model.
+
+So v4 does not ask. It routes. The classifier (the tuned v3.2 rules) still decides what kind of work a prompt is; the mod puts that decision on the wire.
+
+Claude Code itself still has **no automatic per-prompt model choice**. It ships the knobs (`opusplan`, `/advisor`, `CLAUDE_CODE_SUBAGENT_MODEL`, `fallbackModel`, `model:` in skills and agents) but nothing that decides. Opus is the default on every plan, and the built-in Explore agent now runs on your main model instead of Haiku.
 
 ## What it does
 
-- **Routes down, not up.** Substantive prompts that do not need Opus go to a Sonnet or Haiku subagent. Genuinely hard reasoning stays on Opus. Trivial one-liners are answered inline (delegating those costs more than it saves, so it does not).
-- **Counts honestly.** It tracks one real number: how many prompts it kept off Opus, per day, per 5-hour window, and per week. No estimated dollars. No invented multipliers. Just a count of routing decisions that you validate against your own usage meter.
-- **Lives on your status line.** A compact `⇩ today·week` segment ticks up as you work, so you watch your saved budget accumulate in real time.
-- **Cannot die quietly.** The previous generation of this router silently stopped working one day and nobody noticed for months. This version repairs its own wiring at every session boot, and the status line flips to `CR⚠` the instant it is not running. Silent death is no longer possible.
-
-## How routing works
-
-The classifier is rule-based and free (instant regex), with an optional ~$0.001 Haiku check only for genuinely ambiguous prompts. It is deliberately **conservative about Opus**:
-
-| Prompt looks like | Goes to | Counted as kept off Opus |
+| Work | Main loop | Subagent spawned without a model |
 |---|---|---|
-| Find / search / "where is X" / multi-file mechanical | **Sonnet** | yes |
-| Bug fix, small feature, tests, refactor, anything uncertain | **Sonnet** (the workhorse default) | yes |
-| Clearly simple, substantive | **Haiku** | yes |
-| Trivial one-liner ("what is a closure") | answered inline, no hand-off | no (no real saving to claim) |
-| Architecture, security audit, system design, deep trade-off analysis | **Opus** | no (this is what Opus is for) |
+| Lookups: "where is X defined", "find all callers" | Sonnet | Haiku |
+| Quick questions, formatting, syntax | Sonnet (Haiku if you allow it) | Haiku |
+| Ordinary coding: fixes, features, tests, anything uncertain | Sonnet | Sonnet |
+| Bulk text on a host with a local `gpu` command | Sonnet, plus a note to do the bulk on the GPU | Sonnet |
+| Architecture, deep trade-offs (2+ deep signals) | your session model | left alone |
+| Anything security (one signal is enough) | your session model, lifted to Opus if you run Sonnet | left alone |
+| A follow-up ("yes", "go ahead") to a deep turn | stays deep | |
+| Explore (built-in) | | Haiku |
 
-When uncertain, it defaults to **Sonnet**, not Haiku. Sonnet is capable enough to avoid a wrong cheap answer that would force an Opus retry, which would burn the budget anyway.
+- **It never routes up by accident.** It only lowers a tier, except for security work on a Sonnet session, which it lifts to Opus (configurable).
+- **It respects explicit choices.** A spawn that names a model, a forked agent, a teammate and a workflow agent are left alone. `/cr pin opus` pins the main loop.
+- **It is cache-aware.** Switching models re-caches the conversation on the new model. The router tracks where each model's prompt cache stands and skips a switch whose rewrite would cost more than the cheaper model saves (default: 60k tokens). One decision per turn, never mid-turn.
+- **It never sends a guessed model id.** Requests need full ids. It learns them from what the API reports, honours `ANTHROPIC_DEFAULT_*_MODEL` pins, and verifies any other id once with a one-token call before using it. No verified id, no switch.
+- **It tightens when the budget runs hot.** Past 80% of the 5-hour window (or 90% of the week) it stops optional lifts and switches down more eagerly.
+- **It counts honestly.** Per day: which tier each main turn ran on, how many turns went down or up, how many switches the cache held back, which subagents it sent down, and the real requests and tokens per model as the API reported them.
 
-Need to force a model? `/route opus "..."` or `/route haiku "..."`. Think a cheap answer fell short? `/retry opus`.
+## Install
 
-## The status line
+From Claude Code:
 
 ```
-LARRY STATUS │ Opus 4.8 │ ctx:11% (22k/200k) ⏱0s │ ✿1 🔥24d │ ⇩37·214wk
+/plugin install tier-router --marketplace nixfred/claude-router
 ```
 
-`⇩37·214wk` means 37 prompts kept off Opus today, 214 this week. Line that up against how fast your usage meter is moving. Heavy routing days bend your burn curve down. That correlation is the honest version of "it saved me X." If it ever reads `CR⚠`, the router stopped and needs a look (it will usually have already fixed itself by your next session).
-
-## It does not die
-
-Three independent layers, plus git:
-
-1. **Self-heal at boot.** `cr-doctor` runs on every Claude Code session start, verifies the hook is registered and present, and reinstalls it if anything is missing. Wiped by an unrelated settings merge? Restored automatically on the next session.
-2. **Visible alarm.** The status line shows `CR⚠` the moment the hook is not wired. You see it within one turn instead of months later.
-3. **Daily cron.** An optional once-a-day `cr-doctor` run covers stretches where you do not open a fresh session.
-
-For all three to fail at once and stay failed, the universe has to actively hate you, and even then your git history holds the source.
-
-## Install (manual)
-
-The upstream marketplace plugin is deprecated. The manual install is the supported path and is what makes the self-heal and status line work.
+Or from a clone, which also retires a v3 install if one is wired into `settings.json`:
 
 ```bash
 git clone https://github.com/nixfred/claude-router.git
@@ -72,22 +62,35 @@ cd claude-router
 ./install.sh
 ```
 
-`install.sh` copies the hooks, agents, and skills into `~/.claude`, then runs `cr-doctor` once to register both hooks (the UserPromptSubmit router and the SessionStart self-heal). Restart Claude Code to activate. Add the status line segment and the daily cron from the snippets in [docs/configuration.md](docs/configuration.md).
+The clone install reads the mod straight from the folder, so `git pull` and `/reload-plugins` is an upgrade. Tested on Claude Code 2.1.293. The mod API is early access and may change between releases.
 
-## Commands
+## Use
+
+The status line shows the route of the last turn and your 5-hour usage:
+
+```
+CR Sonnet · standard · 5h 31%
+```
 
 | Command | What it does |
 |---|---|
-| `/route <model> "..."` | Force a specific model for one prompt |
-| `/retry opus` | Re-run the last prompt on a bigger model |
-| `/router-stats` | Show the kept-off-Opus tally (today / window / week) |
-| `/cr-doctor` | Check CR health and repair it if needed |
-| `/router-analytics` | HTML dashboard of routing over time |
-| `/orchestrate` | Run a complex task across forked subagents |
+| `/cr` | Status: mode, last decision and why, limits, today's counts, requests by model |
+| `/cr pin <opus\|sonnet\|haiku>` | Pin the main loop for this session; `/cr unpin` routes again |
+| `/cr dry` | Dry run: show what it would do, change nothing |
+| `/cr subagents` | Route subagents only, leave the main loop alone |
+| `/cr off` / `/cr full` | Off, or back to full routing |
+
+Settings live in the plugin's options: `claude plugin configure tier-router`, or `/config`. See [docs/configuration.md](docs/configuration.md).
+
+## Honest limits
+
+- The classifier is regex rules. It is fast and free, and it is wrong sometimes. The status line shows every decision so you can see it, and `/cr pin` overrides it.
+- Mid-session switches cost a cache rewrite. The router prices that in, but it estimates from message counts, not exact tokens.
+- A mod cannot see an agent file's own `model:`. Your own and plugin agents are left alone unless you turn on `routeCustomAgents`; deep agent types (security, architect, plan) are never sent down.
 
 ## Credit
 
-Forked from [0xrdan/claude-router](https://github.com/0xrdan/claude-router) by Dan Monteiro, whose classifier and subagent design are the foundation here. Version 3 rebuilt the purpose around subscription rate-limit survival: dollars removed, honest kept-off-Opus counting, conservative Opus routing, a live status-line tally, and the self-heal layer so it never silently dies again.
+Forked from claude-router by Dan Monteiro (0xrdan), whose classifier and subagent design are the foundation here. His repository has since been deleted; this fork is the live line. Version 3 rebuilt the purpose around subscription rate-limit survival. Version 4 rebuilt the mechanism on Claude Code's mod API.
 
 ## License
 
