@@ -37,7 +37,7 @@ const drain = async <C, R>(stream: AsyncGenerator<C, R> & { result: Promise<R> }
 
 const turn = async ($: Parameters<TestBody>[0], turnId: string, text: string, step: Partial<TurnStepInput> = {}) => {
   await $.turn.start({ turnId, text })
-  await drain($.turn.step({ turnId, index: 0, model: OPUS, messageCount: 4, ...step }))
+  await drain($.turn.step({ turnId, index: 0, model: OPUS, messageCount: 1, ...step }))
   await $.turn.complete({ turnId, answer: '', durationMs: 1, isAborted: false, reason: 'answer' })
 }
 
@@ -72,15 +72,15 @@ describe('main loop', () => {
   test('a follow-up to a deep turn stays deep', async ($, on) => {
     const { steps } = bottom(on)
     await turn($, 't1', 'compare the trade-offs of this architecture')
-    await turn($, 't2', 'yes, go ahead', { messageCount: 6 })
+    await turn($, 't2', 'yes, go ahead', { messageCount: 3 })
     expect(steps.map(s => s.model)).toEqual([OPUS, OPUS])
   })
 
   test('every step of a turn keeps the turn decision', async ($, on) => {
     const { steps } = bottom(on)
     await $.turn.start({ turnId: 't1', text: 'fix the null check in parser.ts' })
-    await drain($.turn.step({ turnId: 't1', index: 0, model: OPUS, messageCount: 4 }))
-    await drain($.turn.step({ turnId: 't1', index: 1, model: OPUS, messageCount: 6 }))
+    await drain($.turn.step({ turnId: 't1', index: 0, model: OPUS, messageCount: 1 }))
+    await drain($.turn.step({ turnId: 't1', index: 1, model: OPUS, messageCount: 3 }))
     expect(steps.map(s => s.model)).toEqual([SONNET, SONNET])
   })
 

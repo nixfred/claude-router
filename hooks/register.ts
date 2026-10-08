@@ -87,6 +87,8 @@ type State = {
   ids: Partial<Record<Tier, string>>
   /** Tiers with no usable id this session: no request is switched to them. */
   unresolved: Set<Tier>
+  /** Whether the transcript held answers before this router's first decision; undefined until checked. */
+  isResumed?: boolean
 }
 
 /** Agents Claude Code ships, for a spawn that arrives without its provider. */
@@ -117,6 +119,17 @@ async function view($: Engine, s: State, messageCount: number): Promise<CacheVie
     contextTokens: s.contextTokens,
     marks: s.marks,
     ttlMs: effective(s).cacheTtlMinutes * 60_000,
+    isResumed: s.isResumed,
+  }
+}
+
+/** Whether the main conversation already holds an answer: a resumed or reloaded session. */
+async function hasAnswers($: Engine): Promise<boolean> {
+  try {
+    const messages = await $.session.messages()
+    return messages.some(m => m.role === 'assistant')
+  } catch {
+    return false
   }
 }
 
@@ -334,6 +347,7 @@ export const register: Register = (on, options) => {
     const turn = s.turns.get(e.turnId) ?? { c: SKIP }
 
     if (running && home && turn.tier === undefined) {
+      if (s.isResumed === undefined && Object.keys(s.marks).length === 0) s.isResumed = await hasAnswers($)
       // Decided once, at the turn's first request: switching inside a turn
       // would rewrite the cache inside the turn.
       const decision = s.pin

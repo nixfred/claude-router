@@ -89,6 +89,14 @@ describe('decideMain', () => {
     expect(d.reason).toContain('stayed')
   })
 
+  test('a resumed conversation with no numbers yet stays put for one turn', () => {
+    const resumed: CacheView = { ...cold(0, 30), isResumed: true }
+    const d = decideMain(c('fix the null check in parser.ts'), 'opus', 'opus', undefined, resumed, DEFAULTS)
+    expect(d.tier).toBe('opus')
+    expect(d.reason).toContain('measuring')
+    expect(decideMain(c('fix the null check in parser.ts'), 'opus', 'opus', undefined, cold(0, 30), DEFAULTS).tier).toBe('sonnet')
+  })
+
   test('the switch back to a warm Sonnet cache is cheap again', () => {
     const view: CacheView = {
       ...cold(300_000, 40),

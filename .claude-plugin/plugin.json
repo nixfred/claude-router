@@ -1,6 +1,6 @@
 {
   "name": "tier-router",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "Model routing that actually routes: a Claude Code mod that sets the model of every main-loop request and every subagent spawn to the lowest tier that does the job, lifts for deep and security work, and never takes a switch whose prompt-cache rewrite costs more than it saves.",
   "author": { "name": "Fred Nix", "url": "https://github.com/nixfred" },
   "homepage": "https://github.com/nixfred/claude-router",

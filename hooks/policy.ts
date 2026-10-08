@@ -76,6 +76,8 @@ export type CacheView = {
   contextTokens: number
   marks: Partial<Record<Tier, CacheMark>>
   ttlMs: number
+  /** The transcript already held answers when this router first looked (a resume, a reload). */
+  isResumed?: boolean
 }
 
 /**
@@ -152,6 +154,11 @@ export const decideMain = (
   if (target === current) return { tier: target, reason: route }
 
   if (RANK[target] < RANK[current]) {
+    // A conversation already under way that this router has no numbers for
+    // (a resume, a reload): its size and cache state are unknown, so the
+    // first turn stays put and measures them.
+    const isBlind = view.isResumed === true && view.contextTokens === 0 && Object.keys(view.marks).length === 0
+    if (isBlind) return { tier: current, reason: `${route}, stayed (measuring the cache first)` }
     const extra = extraSwitchTokens(current, target, view)
     if (extra > config.maxSwitchTokens) {
       return { tier: current, reason: `${route}, stayed (switch would rewrite ${Math.round(extra / 1000)}k cached tokens)` }

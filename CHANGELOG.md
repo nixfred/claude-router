@@ -2,6 +2,11 @@
 
 All notable changes to Claude Router will be documented in this file.
 
+## [4.0.1] - 2026-10-08
+
+### Fixed
+- **Resumed and reloaded sessions are measured before switching.** A reload starts the mod with no cache marks and no context size, which priced any switch as free. On a resumed 300k conversation that would have rewritten the whole prefix on Sonnet while Opus's cache was still warm. When the transcript already holds answers at the mod's first decision (`$.session.messages()`), that turn stays put and measures; routing resumes from the next turn. Message counts could not tell this apart: a fresh first request already carries several context messages. Found in a live three-turn `--continue` run (Opus, Sonnet, Opus: switching itself worked, no errors).
+
 ## [4.0.0] - 2026-10-08
 
 "It routes now." Rebuilt on Claude Code's mod API. Versions 1 to 3 asked the main model to delegate; v4 sets the model of each request itself.
